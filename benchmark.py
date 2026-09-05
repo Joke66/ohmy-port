@@ -20,7 +20,7 @@ LINE = "ERR 0x50 temp=25.3 volt=12.00 status=OK"
 
 def burst_throughput(app, total=100_000, batch_size=200):
     win = SerialToolWindow()
-    batch = [LINE] * batch_size
+    batch = [LINE.encode()] * batch_size
     t0 = time.time()
     for _ in range(total // batch_size):
         win._on_receive_batch(batch)
