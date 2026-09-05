@@ -3,20 +3,21 @@
 独立于「老化板上位机」，可单独运行：
     python serial_tool.py
 
-也可由主工具通过「打开串口工具」按钮拉起。自包含：仅依赖 pyserial + PySide6。
+也可由主工具通过「打开串口工具」按钮拉起。依赖：pyserial + PySide6 + pyqtgraph。
 
 功能概览：
 - 真·HEX 收发、编码选择（ASCII/UTF-8/GBK）、完整串口参数（菜单展开）
 - 多关键词过滤（高亮/仅显示/排除/上下分栏）
 - 发送辅助（换行/历史/定时发送/快捷按钮）、收发统计
 - 端口热插拔自动检测、深色主题、字体缩放、自动保存分片
-- 数值曲线绘图、脚本/自动应答（菜单展开）
+- 数值曲线绘图（独立窗口）、脚本/自动应答（菜单展开）
 """
 
 from __future__ import annotations
 
 import collections
 import datetime
+import json
 import queue
 import re
 import sys
@@ -27,12 +28,16 @@ from pathlib import Path
 import serial
 from serial.tools import list_ports
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QPainter, QPen, QTextCharFormat, QTextDocument
+import pyqtgraph as pg
+
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QTextCharFormat, QTextDocument
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-    QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+    QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 _BAUDS = ["115200", "57600", "38400", "19200", "9600", "4800", "2400", "921600"]
@@ -63,15 +68,24 @@ QMenu { background-color: #2d2d2d; }
 QMenu::item:selected { background-color: #0e639c; }
 """
 
+_EYE_QSS = """
+QWidget { background-color: #c7edcc; color: #003300; font-size: 13px; }
+QPushButton { background-color: #b8e0bb; border: 1px solid #8fbf93; padding: 5px 10px; border-radius: 3px; color: #003300; }
+QPushButton:hover { background-color: #a4d8a8; }
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTableWidget { background-color: #dcf3de; border: 1px solid #8fbf93; color: #003300; }
+QComboBox QAbstractItemView { background-color: #dcf3de; selection-background-color: #7fb883; }
+QPlainTextEdit { background-color: #dcf3de; }
+QHeaderView::section { background-color: #b8e0bb; border: 1px solid #8fbf93; color: #003300; }
+QMenuBar { background-color: #b8e0bb; }
+QMenu { background-color: #dcf3de; }
+QMenu::item:selected { background-color: #7fb883; }
+"""
+
 _NUM_RE = re.compile(r"-?\d+\.?\d*")
 
 
 def _now() -> str:
     return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-
-
-def _ts_name() -> str:
-    return datetime.datetime.now().strftime("serial_%Y%m%d_%H%M%S")
 
 
 def _fmt_bytes(n: int) -> str:
@@ -203,73 +217,260 @@ class SerialMonitor:
                     break
 
 
-class PlotWidget(QWidget):
-    """简易实时曲线：把收到的数值按通道绘制（QPainter，无第三方依赖）。"""
+_PLOT_COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c"]
 
-    _COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c"]
+
+class PlotRule:
+    """单条数值提取规则：正则(带捕获组)或关键词(取其后第一个数字)。"""
+
+    def __init__(self, name: str, pattern: str):
+        self.name = name
+        self.pattern = pattern
+        self._regex = None
+        try:
+            rx = re.compile(pattern)
+            if rx.groups >= 1:
+                self._regex = rx
+        except re.error:
+            self._regex = None
+
+    def match(self, text: str) -> float | None:
+        if self._regex is not None:
+            m = self._regex.search(text)
+            if not m:
+                return None
+            try:
+                return float(m.group(1))
+            except (ValueError, TypeError):
+                pass
+            nums = _extract_numbers(m.group(0))
+            return nums[0] if nums else None
+        if self.pattern:
+            idx = text.lower().find(self.pattern.lower())
+            if idx >= 0:
+                nums = _extract_numbers(text[idx + len(self.pattern):])
+                return nums[0] if nums else None
+        return None
+
+
+class PlotWidget(QWidget):
+    """实时折线图（pyqtgraph）：黑底 + 命名通道图例，横轴为时间（秒）。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._samples: collections.deque = collections.deque(maxlen=_PLOT_WINDOW)
-        self.setMinimumHeight(180)
+        self._t0: float | None = None
+        self._curves: list = []
+        self._data: list[collections.deque] = []
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._pw = pg.PlotWidget()
+        self._pw.setBackground("#000000")
+        self._pw.showGrid(x=True, y=True, alpha=0.25)
+        self._pw.setLabel("bottom", "时间 (s)", color="#cccccc")
+        self._pw.setLabel("left", "数值", color="#cccccc")
+        for axis in ("bottom", "left"):
+            self._pw.getAxis(axis).setTextPen("#cccccc")
+            self._pw.getAxis(axis).setPen("#666666")
+        layout.addWidget(self._pw)
+        self.setMinimumHeight(200)
+        self.set_channels([])
 
-    def add_sample(self, values: list[float]) -> None:
-        if values:
-            self._samples.append(list(values))
-            self.update()
+    def has_channels(self) -> bool:
+        return bool(self._curves)
+
+    def set_channels(self, names: list[str], show_legend: bool = True) -> None:
+        self._curves = []
+        self._data = []
+        self._pw.clear()
+        if show_legend:
+            legend = self._pw.addLegend()
+            legend.setLabelTextColor("#cccccc")
+        for i, name in enumerate(names):
+            color = _PLOT_COLORS[i % len(_PLOT_COLORS)]
+            curve = self._pw.plot([], [], pen=pg.mkPen(color, width=2),
+                                  name=(name if show_legend else None))
+            self._curves.append(curve)
+            self._data.append(collections.deque(maxlen=_PLOT_WINDOW))
+
+    def add_sample(self, row: list) -> None:
+        if self._t0 is None:
+            self._t0 = time.monotonic()
+        x = time.monotonic() - self._t0
+        for i, v in enumerate(row):
+            if v is not None and i < len(self._data):
+                self._data[i].append((x, float(v)))
+        for i, curve in enumerate(self._curves):
+            data = self._data[i]
+            if data:
+                curve.setData([p[0] for p in data], [p[1] for p in data])
 
     def clear(self) -> None:
-        self._samples.clear()
-        self.update()
+        self._t0 = None
+        for data in self._data:
+            data.clear()
+        for curve in self._curves:
+            curve.setData([], [])
 
-    def paintEvent(self, event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        p.fillRect(0, 0, w, h, QColor("#fafafa"))
-        p.setPen(QPen(QColor("#dddddd")))
-        p.drawLine(0, h // 2, w, h // 2)
-        if len(self._samples) < 2:
-            p.end()
+
+def _fmt_val(v: float) -> str:
+    if v == int(v):
+        return str(int(v))
+    return f"{v:.4f}".rstrip("0").rstrip(".")
+
+
+class PlotWindow(QDialog):
+    """数值绘图独立窗口：黑底折线图 + 右侧提取结果分栏。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("数值绘图")
+        self.resize(900, 560)
+        self._plot_rules: list[PlotRule] = []
+        self._plot_last: list[float | None] = []
+        self._build()
+        self._apply_rules()
+
+    def _build(self) -> None:
+        pp = QVBoxLayout(self)
+        pp.setContentsMargins(8, 8, 8, 8)
+        pp.setSpacing(4)
+
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("数值曲线"))
+        bar.addWidget(self._btn("添加规则", self._add_rule))
+        bar.addWidget(self._btn("删除选中", self._del_rule))
+        bar.addWidget(self._btn("清空", self.clear_plot))
+        bar.addStretch(1)
+        pp.addLayout(bar)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(4)
+        self.plot_widget = PlotWidget()
+        lv.addWidget(self.plot_widget, 1)
+        hint = QLabel("规则：正则用 ( ) 圈出数值，如 temp=(\\d+\\.?\\d*)；"
+                      "普通关键词则取关键词之后的第一个数字。无规则时不绘图。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888888;")
+        lv.addWidget(hint)
+        self.rule_table = QTableWidget(0, 2)
+        self.rule_table.setHorizontalHeaderLabels(["通道名", "命中规则"])
+        self.rule_table.horizontalHeader().setStretchLastSection(True)
+        self.rule_table.itemChanged.connect(self._on_rule_changed)
+        lv.addWidget(self.rule_table, 1)
+        splitter.addWidget(left)
+
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(4)
+        rv.addWidget(QLabel("提取结果"))
+        self.result_table = QTableWidget(0, 2)
+        self.result_table.setHorizontalHeaderLabels(["关键词", "数值"])
+        self.result_table.horizontalHeader().setStretchLastSection(True)
+        self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        rv.addWidget(self.result_table, 1)
+        splitter.addWidget(right)
+
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([620, 220])
+        pp.addWidget(splitter, 1)
+
+    def _btn(self, text: str, slot) -> QPushButton:
+        btn = QPushButton(text)
+        btn.clicked.connect(slot)
+        return btn
+
+    # ---- 规则 ----
+    def _add_rule(self) -> None:
+        row = self.rule_table.rowCount()
+        self.rule_table.insertRow(row)
+        self.rule_table.setItem(row, 0, QTableWidgetItem(""))
+        self.rule_table.setItem(row, 1, QTableWidgetItem(""))
+
+    def _del_rule(self) -> None:
+        row = self.rule_table.currentRow()
+        if row >= 0:
+            self.rule_table.removeRow(row)
+            self._apply_rules()
+
+    def _on_rule_changed(self, _item) -> None:
+        self._apply_rules()
+
+    def _apply_rules(self) -> None:
+        rules: list[PlotRule] = []
+        for row in range(self.rule_table.rowCount()):
+            name_item = self.rule_table.item(row, 0)
+            rule_item = self.rule_table.item(row, 1)
+            name = (name_item.text() if name_item else "").strip()
+            pattern = (rule_item.text() if rule_item else "").strip()
+            if name or pattern:
+                rules.append(PlotRule(name or f"通道{len(rules) + 1}", pattern))
+        new_names = [r.name for r in rules]
+        old_names = [r.name for r in self._plot_rules]
+        self._plot_rules = rules
+        if new_names != old_names or not self.plot_widget.has_channels():
+            self._plot_last = [None] * len(rules)
+            self.plot_widget.set_channels(new_names, show_legend=bool(rules))
+            self.plot_widget.clear()
+        self._rebuild_result_table()
+
+    # ---- 数据接入 ----
+    def feed_texts(self, texts: list[str]) -> None:
+        if not texts or not self.isVisible() or not self._plot_rules:
             return
-        n_channels = max((len(s) for s in self._samples), default=0)
-        if n_channels == 0:
-            p.end()
-            return
-        all_vals = [v for s in self._samples for v in s]
-        lo, hi = min(all_vals), max(all_vals)
-        if hi - lo < 1e-9:
-            hi = lo + 1.0
-        pad = 8
-        top, bottom = pad, h - pad
-        xs = list(self._samples)
-        n = len(xs)
-        for ch in range(n_channels):
-            pts = []
-            for i, s in enumerate(xs):
-                if ch < len(s):
-                    x = pad + i * (w - 2 * pad) / max(1, n - 1)
-                    y = bottom - (s[ch] - lo) / (hi - lo) * (bottom - top)
-                    pts.append((x, y))
-            if len(pts) >= 2:
-                pen = QPen(QColor(self._COLORS[ch % len(self._COLORS)]))
-                pen.setWidth(2)
-                p.setPen(pen)
-                for i in range(1, len(pts)):
-                    p.drawLine(int(pts[i - 1][0]), int(pts[i - 1][1]), int(pts[i][0]), int(pts[i][1]))
-        p.end()
+        rule_row: list[float | None] = [None] * len(self._plot_rules)
+        for text in texts:
+            for i, rule in enumerate(self._plot_rules):
+                v = rule.match(text)
+                if v is not None:
+                    rule_row[i] = v
+        for i in range(len(rule_row)):
+            if rule_row[i] is None:
+                rule_row[i] = self._plot_last[i]
+            else:
+                self._plot_last[i] = rule_row[i]
+        self.plot_widget.add_sample(rule_row)
+        self._update_values()
+
+    # ---- 提取结果分栏 ----
+    def _rebuild_result_table(self) -> None:
+        self.result_table.setRowCount(len(self._plot_rules))
+        for row, rule in enumerate(self._plot_rules):
+            self.result_table.setItem(row, 0, QTableWidgetItem(rule.pattern or rule.name))
+            last = self._plot_last[row] if row < len(self._plot_last) else None
+            self.result_table.setItem(row, 1, QTableWidgetItem("--" if last is None else _fmt_val(last)))
+
+    def _update_values(self) -> None:
+        for row, last in enumerate(self._plot_last):
+            item = self.result_table.item(row, 1)
+            if item is not None:
+                item.setText("--" if last is None else _fmt_val(last))
+
+    def clear_plot(self) -> None:
+        self.plot_widget.clear()
+        self._plot_last = [None] * len(self._plot_rules)
+        self._update_values()
 
 
-class ShortcutButton(QPushButton):
-    """快捷发送按钮：单击发送，双击编辑命令文本。"""
+class CommandButton(QPushButton):
+    """命令按钮：单击发送，右键编辑/删除。"""
 
-    def __init__(self, text: str, on_edit):
+    def __init__(self, text: str, on_send, on_edit, on_delete):
         super().__init__(text)
         self._on_edit = on_edit
+        self._on_delete = on_delete
+        self.clicked.connect(on_send)
 
-    def mouseDoubleClickEvent(self, event) -> None:
-        self._on_edit(self)
-        super().mouseDoubleClickEvent(event)
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        menu.addAction("编辑", self._on_edit)
+        menu.addAction("删除", self._on_delete)
+        menu.exec(event.globalPos())
 
 
 class _WheelZoomFilter(QObject):
@@ -282,6 +483,49 @@ class _WheelZoomFilter(QObject):
                 obj.zoomOut(1)
             return True
         return False
+
+
+class CycleDialog(QDialog):
+    """定时循环发送设置弹窗：启用/间隔/勾选参与循环的命令。"""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self._win = window
+        self.setWindowTitle("定时循环发送")
+        self.resize(460, 420)
+        layout = QVBoxLayout(self)
+        top = QHBoxLayout()
+        self.enable_check = QCheckBox("启用定时循环发送")
+        self.enable_check.setChecked(self._win._cycle_enabled)
+        self.enable_check.toggled.connect(self._win._set_cycle_enabled)
+        top.addWidget(self.enable_check)
+        top.addWidget(QLabel("间隔(ms)"))
+        self.interval_spin = QSpinBox()
+        self.interval_spin.setRange(10, 3_600_000)
+        self.interval_spin.setValue(self._win._cycle_interval)
+        self.interval_spin.valueChanged.connect(self._win._set_cycle_interval)
+        top.addWidget(self.interval_spin)
+        top.addStretch(1)
+        layout.addLayout(top)
+        layout.addWidget(QLabel("勾选参与循环发送的命令："))
+        self.list_widget = QWidget()
+        self.list_layout = QVBoxLayout(self.list_widget)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.list_widget, 1)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        while self.list_layout.count():
+            item = self.list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for i, cmd in enumerate(self._win._commands):
+            chk = QCheckBox(cmd.get("name") or f"命令{i + 1}")
+            chk.setChecked(bool(cmd.get("cycle")))
+            chk.setToolTip(cmd.get("content") or "")
+            chk.toggled.connect(lambda checked, idx=i: self._win._set_command_cycle(idx, checked))
+            self.list_layout.addWidget(chk)
+        self.list_layout.addStretch(1)
 
 
 class SerialToolWindow(QMainWindow):
@@ -302,11 +546,21 @@ class SerialToolWindow(QMainWindow):
         self._tx_bytes = 0
         self._rate: collections.deque = collections.deque()  # (mono, rx, tx)
         self._known_ports: set[str] = set()
-        self._dark = False
-        self._send_commands: list[str] = [""] * 8
+        self._theme = "day"
+        self._commands: list[dict] = []
+        self._cycle_enabled = False
+        self._cycle_interval = 1000
+        self._cycle_dialog: CycleDialog | None = None
+        self._filter_enabled = False
+        self._log_dir_override: str | None = None
+        self._cycle_idx = 0
         self._wheel_filter = _WheelZoomFilter(self)
+        self._load_config()
         self._build()
+        self.plot_window = PlotWindow(self)
         self._build_menu()
+        self._apply_theme_qss()
+        self.plot_window.finished.connect(lambda _r: self.plot_action.setChecked(False))
         self.serial.set_receive_callback(self._on_receive_batch)
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(_FLUSH_MS)
@@ -333,7 +587,6 @@ class SerialToolWindow(QMainWindow):
         acts = [
             ("串口参数", self.serial_params_panel),
             ("发送辅助", self.send_assist_panel),
-            ("数值绘图", self.plot_panel),
             ("自动应答", self.auto_reply_panel),
         ]
         for label, panel in acts:
@@ -341,10 +594,20 @@ class SerialToolWindow(QMainWindow):
             a.toggled.connect(panel.setVisible)
             view.addAction(a)
 
+        self.plot_action = QAction("数值绘图", self, checkable=True)
+        self.plot_action.toggled.connect(self._toggle_plot_window)
+        view.addAction(self.plot_action)
+
         view.addSeparator()
-        self.dark_action = QAction("深色主题", self, checkable=True)
-        self.dark_action.toggled.connect(self._apply_theme)
-        view.addAction(self.dark_action)
+        theme_menu = view.addMenu("主题")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for label, key in (("黑色", "black"), ("护眼", "eye"), ("白天", "day")):
+            a = QAction(label, self, checkable=True)
+            a.setChecked(self._theme == key)
+            a.triggered.connect(lambda _=False, k=key: self._set_theme(k))
+            theme_group.addAction(a)
+            theme_menu.addAction(a)
 
         zoom_in = QAction("字体增大", self)
         zoom_in.triggered.connect(lambda: self.log_text.zoomIn(1))
@@ -356,6 +619,11 @@ class SerialToolWindow(QMainWindow):
         view.addAction(zoom_in)
         view.addAction(zoom_out)
         view.addAction(zoom_reset)
+
+        settings_menu = menubar.addMenu("设置")
+        log_dir_action = QAction("日志保存目录...", self)
+        log_dir_action.triggered.connect(self._choose_log_dir)
+        settings_menu.addAction(log_dir_action)
 
         help_menu = menubar.addMenu("帮助")
         about = QAction("关于", self)
@@ -420,7 +688,7 @@ class SerialToolWindow(QMainWindow):
         filt.addWidget(QLabel("关键词"))
         self.keyword_edit = QLineEdit()
         self.keyword_edit.setPlaceholderText("多个关键词用逗号/空格分隔，如 Err,Timeout,0x50")
-        self.keyword_edit.returnPressed.connect(self.apply_filter)
+        self.keyword_edit.returnPressed.connect(self._enable_filter)
         filt.addWidget(self.keyword_edit, 1)
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("显示全部并高亮", "highlight")
@@ -441,7 +709,8 @@ class SerialToolWindow(QMainWindow):
         self.hex_view_check = QCheckBox("HEX显示")
         self.hex_view_check.toggled.connect(self._on_hex_view)
         filt.addWidget(self.hex_view_check)
-        filt.addWidget(self._btn("应用", self.apply_filter))
+        self.filter_btn = self._btn("应用", self.toggle_filter)
+        filt.addWidget(self.filter_btn)
         layout.addLayout(filt)
 
         # 上：日志内容
@@ -449,6 +718,8 @@ class SerialToolWindow(QMainWindow):
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumBlockCount(_MAX_LINES)
         self.log_text.installEventFilter(self._wheel_filter)
+        self.log_text.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.log_text.customContextMenuRequested.connect(self._show_log_menu)
         layout.addWidget(self.log_text, 3)
 
         # 下：命中结果面板
@@ -474,31 +745,16 @@ class SerialToolWindow(QMainWindow):
         sa = QVBoxLayout(self.send_assist_panel)
         sa.setContentsMargins(0, 0, 0, 0)
         sa.setSpacing(3)
-        timer_row = QHBoxLayout()
-        self.timer_check = QCheckBox("定时发送")
-        self.timer_check.toggled.connect(self._on_timer_toggle)
-        timer_row.addWidget(self.timer_check)
-        timer_row.addWidget(QLabel("间隔(ms)"))
-        self.timer_spin = QSpinBox()
-        self.timer_spin.setRange(10, 3_600_000)
-        self.timer_spin.setValue(1000)
-        self.timer_spin.valueChanged.connect(self._on_timer_interval)
-        timer_row.addWidget(self.timer_spin)
-        timer_row.addStretch(1)
-        sa.addLayout(timer_row)
-        short_row = QHBoxLayout()
-        short_row.addWidget(QLabel("快捷发送(双击编辑)"))
-        self.short_btns: list[ShortcutButton] = []
-        for i in range(8):
-            btn = ShortcutButton(f"F{i + 1}", self._edit_shortcut)
-            btn.setToolTip("双击设置命令，单击发送")
-            btn.clicked.connect(lambda _=False, idx=i: self._send_shortcut(idx))
-            self.short_btns.append(btn)
-            short_row.addWidget(btn)
-        short_row.addStretch(1)
-        sa.addLayout(short_row)
+        bar = QHBoxLayout()
+        bar.addWidget(self._btn("添加命令", self._add_command))
+        bar.addWidget(self._btn("定时循环发送...", self._open_cycle_dialog))
+        bar.addStretch(1)
+        sa.addLayout(bar)
+        self.command_tabs = QTabWidget()
+        sa.addWidget(self.command_tabs, 1)
         self.send_assist_panel.setVisible(False)
         layout.addWidget(self.send_assist_panel)
+        self._rebuild_command_tabs()
 
         # 底部操作行 + 统计
         bar = QHBoxLayout()
@@ -511,7 +767,6 @@ class SerialToolWindow(QMainWindow):
         bar.addWidget(self.scroll_check)
         self.record_btn = self._btn("开始记录", self.toggle_record)
         bar.addWidget(self.record_btn)
-        bar.addWidget(self._btn("保存日志", self.save_log))
         bar.addStretch(1)
         self.stat_label = QLabel("RX: 0 B  TX: 0 B")
         self.stat_label.setStyleSheet("color: #888888;")
@@ -534,20 +789,6 @@ class SerialToolWindow(QMainWindow):
         send.addWidget(self.hex_send_check)
         send.addWidget(self._btn("发送", self.send_raw))
         layout.addLayout(send)
-
-        # 数值绘图（隐藏面板）
-        self.plot_panel = QWidget()
-        pp = QVBoxLayout(self.plot_panel)
-        pp.setContentsMargins(0, 4, 0, 0)
-        pp_bar = QHBoxLayout()
-        pp_bar.addWidget(QLabel("数值曲线（提取每行数字）"))
-        pp_bar.addWidget(self._btn("清空", self._clear_plot))
-        pp_bar.addStretch(1)
-        pp.addLayout(pp_bar)
-        self.plot_widget = PlotWidget()
-        pp.addWidget(self.plot_widget)
-        self.plot_panel.setVisible(False)
-        layout.addWidget(self.plot_panel)
 
         # 自动应答（隐藏面板）
         self.auto_reply_panel = QWidget()
@@ -596,11 +837,13 @@ class SerialToolWindow(QMainWindow):
             port = self.port_combo.currentData()
             if not port:
                 self._sys("请选择串口")
+                QMessageBox.warning(self, "串口连接", "请先选择串口")
                 return
             try:
                 baud = int(self.baud_combo.currentText())
             except ValueError:
                 self._sys("波特率无效")
+                QMessageBox.warning(self, "串口连接", "波特率无效")
                 return
             kwargs = dict(
                 bytesize=self.databits_combo.currentData(),
@@ -611,8 +854,10 @@ class SerialToolWindow(QMainWindow):
             if self.serial.connect(port, baud, **kwargs):
                 self.connect_btn.setText("关闭串口")
                 self._sys(f"已打开 {port} @ {baud}")
+                QMessageBox.information(self, "串口连接", f"串口 {port} 连接成功")
             else:
                 self._sys(f"打开 {port} 失败")
+                QMessageBox.warning(self, "串口连接", f"串口 {port} 连接失败")
 
     def _on_receive_batch(self, lines: list[bytes]) -> None:
         for line in lines:
@@ -663,41 +908,143 @@ class SerialToolWindow(QMainWindow):
             self.send_combo.removeItem(0)
 
     def _timer_send_tick(self) -> None:
-        if self.serial.is_connected and self.send_combo.currentText():
+        if not self.serial.is_connected:
+            return
+        checked = [i for i, c in enumerate(self._commands)
+                   if c.get("cycle") and c.get("content")]
+        if checked:
+            idx = checked[self._cycle_idx % len(checked)]
+            self._cycle_idx += 1
+            self._send_command(idx)
+        elif self.send_combo.currentText():
             self.send_raw()
 
-    def _on_timer_toggle(self, checked: bool) -> None:
-        if checked:
-            self._timer_send.start(self.timer_spin.value())
+    def _set_cycle_enabled(self, enabled: bool) -> None:
+        self._cycle_enabled = enabled
+        if enabled:
+            self._cycle_idx = 0
+            self._timer_send.start(self._cycle_interval)
         else:
             self._timer_send.stop()
 
-    def _on_timer_interval(self, ms: int) -> None:
-        if self.timer_check.isChecked():
+    def _set_cycle_interval(self, ms: int) -> None:
+        self._cycle_interval = ms
+        if self._cycle_enabled:
             self._timer_send.start(ms)
 
-    def _send_shortcut(self, idx: int) -> None:
-        cmd = self._send_commands[idx]
-        if not cmd:
-            self._sys(f"快捷按钮 F{idx + 1} 未设置（双击编辑）")
+    def _set_command_cycle(self, idx: int, checked: bool) -> None:
+        if 0 <= idx < len(self._commands):
+            self._commands[idx]["cycle"] = checked
+            self._save_config()
+
+    def _open_cycle_dialog(self) -> None:
+        if self._cycle_dialog is None:
+            self._cycle_dialog = CycleDialog(self)
+        self._cycle_dialog._refresh()
+        self._cycle_dialog.show()
+        self._cycle_dialog.raise_()
+
+    # ---- 命令按钮 ----
+    def _rebuild_command_tabs(self) -> None:
+        self.command_tabs.clear()
+        per_page = 8
+        total = len(self._commands)
+        page_count = max(1, (total + per_page - 1) // per_page)
+        for pi in range(page_count):
+            w = QWidget()
+            grid = QGridLayout(w)
+            grid.setContentsMargins(4, 4, 4, 4)
+            for k in range(per_page):
+                idx = pi * per_page + k
+                if idx >= total:
+                    break
+                cmd = self._commands[idx]
+                btn = CommandButton(
+                    cmd.get("name") or f"命令{idx + 1}",
+                    lambda _=False, i=idx: self._send_command(i),
+                    lambda _=False, i=idx: self._edit_command(i),
+                    lambda _=False, i=idx: self._delete_command(i),
+                )
+                btn.setToolTip(cmd.get("content") or "")
+                r, c = divmod(k, 4)
+                grid.addWidget(btn, r, c)
+            self.command_tabs.addTab(w, f"第{pi + 1}页")
+
+    def _commands_changed(self) -> None:
+        self._rebuild_command_tabs()
+        if self._cycle_dialog is not None:
+            self._cycle_dialog._refresh()
+        self._save_config()
+
+    def _add_command(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("添加命令")
+        form = QFormLayout(dlg)
+        name_edit = QLineEdit()
+        content_edit = QPlainTextEdit()
+        content_edit.setFixedHeight(80)
+        form.addRow("命令名称", name_edit)
+        form.addRow("命令内容", content_edit)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        name = name_edit.text().strip()
+        content = content_edit.toPlainText()
+        if not name and not content:
+            return
+        self._commands.append({
+            "name": name or f"命令{len(self._commands) + 1}",
+            "content": content,
+            "cycle": False,
+        })
+        self._commands_changed()
+
+    def _edit_command(self, idx: int) -> None:
+        cmd = self._commands[idx]
+        dlg = QDialog(self)
+        dlg.setWindowTitle("编辑命令")
+        form = QFormLayout(dlg)
+        name_edit = QLineEdit(cmd.get("name") or "")
+        content_edit = QPlainTextEdit()
+        content_edit.setPlainText(cmd.get("content") or "")
+        content_edit.setFixedHeight(80)
+        form.addRow("命令名称", name_edit)
+        form.addRow("命令内容", content_edit)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        cmd["name"] = name_edit.text().strip() or cmd.get("name")
+        cmd["content"] = content_edit.toPlainText()
+        self._commands_changed()
+
+    def _delete_command(self, idx: int) -> None:
+        cmd = self._commands[idx]
+        if QMessageBox.question(self, "删除命令",
+                                f"确定删除命令「{cmd.get('name')}」吗？") != QMessageBox.Yes:
+            return
+        del self._commands[idx]
+        self._commands_changed()
+
+    def _send_command(self, idx: int) -> None:
+        content = self._commands[idx].get("content") or ""
+        if not content:
+            self._sys("命令内容为空")
             return
         if self.hex_send_check.isChecked():
-            data = self._parse_hex(cmd)
+            data = self._parse_hex(content)
             if data is None:
-                self._sys("快捷命令 HEX 格式无效")
+                self._sys("命令 HEX 格式无效")
                 return
         else:
             nl = self.newline_combo.currentData()
-            data = (cmd + nl).encode(self._encoding(), errors="replace")
+            data = (content + nl).encode(self._encoding(), errors="replace")
         self._do_send(data)
-
-    def _edit_shortcut(self, btn: ShortcutButton) -> None:
-        idx = self.short_btns.index(btn)
-        text, ok = QInputDialog.getText(self, "编辑快捷命令", f"F{idx + 1} 命令：",
-                                        text=self._send_commands[idx])
-        if ok:
-            self._send_commands[idx] = text
-            btn.setText(text if text else f"F{idx + 1}")
 
     # ---------- 日志 ----------
     def _encoding(self) -> str:
@@ -735,7 +1082,7 @@ class SerialToolWindow(QMainWindow):
             return
         pieces: list[str] = []
         matched_pieces: list[str] = []
-        plot_values: list[float] = []
+        rx_texts: list[str] = []
         for ts, direction, payload in items:
             if self._paused and direction != "sys":
                 continue
@@ -749,14 +1096,14 @@ class SerialToolWindow(QMainWindow):
                 pieces.append(self._format_line(ts, direction, payload))
             if self._filter.mode == "split" and self._filter.matched(text):
                 matched_pieces.append(self._format_line(ts, direction, payload))
-            if direction == "rx" and not self.plot_panel.isHidden():
-                plot_values.extend(_extract_numbers(text))
+            if direction == "rx" and self.plot_window.isVisible():
+                rx_texts.append(text)
         if pieces:
             self.log_text.appendPlainText("\n".join(pieces))
         if matched_pieces:
             self.matched_text.appendPlainText("\n".join(matched_pieces))
-        if plot_values:
-            self.plot_widget.add_sample(plot_values[:6])
+        if rx_texts:
+            self.plot_window.feed_texts(rx_texts)
         if self._record_file is not None:
             self._record_file.flush()
             if self._record_file.tell() >= _RECORD_MAX_BYTES:
@@ -796,7 +1143,7 @@ class SerialToolWindow(QMainWindow):
         self._buffer.clear()
         self.log_text.clear()
         self.matched_text.clear()
-        self.plot_widget.clear()
+        self.plot_window.clear_plot()
 
     def toggle_pause(self) -> None:
         self._paused = not self._paused
@@ -853,7 +1200,24 @@ class SerialToolWindow(QMainWindow):
         widget.setExtraSelections(selections)
 
     # ---------- 过滤 ----------
+    def toggle_filter(self) -> None:
+        if self._filter_enabled:
+            self._filter_enabled = False
+            self._filter.keywords = []
+            self.filter_btn.setText("应用")
+            self._rerender()
+            self.matched_panel.setVisible(False)
+        else:
+            self._enable_filter()
+
+    def _enable_filter(self) -> None:
+        self._filter_enabled = True
+        self.apply_filter()
+        self.filter_btn.setText("关闭")
+
     def apply_filter(self) -> None:
+        if not self._filter_enabled:
+            return
         self._filter.keywords = LogFilter.parse_keywords(self.keyword_edit.text())
         self._filter.mode = self.mode_combo.currentData()
         self._filter.case_sensitive = self.case_check.isChecked()
@@ -876,8 +1240,8 @@ class SerialToolWindow(QMainWindow):
         self.matched_text.clear()
 
     # ---------- 绘图 ----------
-    def _clear_plot(self) -> None:
-        self.plot_widget.clear()
+    def _toggle_plot_window(self, checked: bool) -> None:
+        self.plot_window.setVisible(checked)
 
     # ---------- 自动应答 ----------
     def _add_auto_rule(self) -> None:
@@ -902,7 +1266,34 @@ class SerialToolWindow(QMainWindow):
 
     # ---------- 保存 ----------
     def _log_dir(self) -> Path:
+        if self._log_dir_override:
+            return Path(self._log_dir_override)
         return Path(__file__).resolve().parent / "Logs"
+
+    def _log_basename(self) -> str:
+        port = self.port_combo.currentData() or ""
+        port = re.sub(r"[^0-9A-Za-z_-]", "_", port) or "serial"
+        return f"{port}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    def _choose_log_dir(self) -> None:
+        start = self._log_dir()
+        start.mkdir(parents=True, exist_ok=True)
+        path = QFileDialog.getExistingDirectory(self, "选择日志保存目录", str(start))
+        if path:
+            self._log_dir_override = path
+            self._sys(f"日志保存目录已设为: {path}")
+
+    def _open_log_dir(self) -> None:
+        path = self._log_dir()
+        path.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _show_log_menu(self, pos) -> None:
+        menu = self.log_text.createStandardContextMenu()
+        menu.addSeparator()
+        menu.addAction("保存日志", self.save_log)
+        menu.addAction("打开日志目录", self._open_log_dir)
+        menu.exec(self.log_text.viewport().mapToGlobal(pos))
 
     def toggle_record(self) -> None:
         if self._record_file is not None:
@@ -915,7 +1306,7 @@ class SerialToolWindow(QMainWindow):
             self.record_btn.setText("停止记录")
 
     def _open_record_file(self) -> None:
-        path = self._log_dir() / f"{_ts_name()}.txt"
+        path = self._log_dir() / f"{self._log_basename()}.txt"
         path.parent.mkdir(parents=True, exist_ok=True)
         self._record_file = open(path, "a", encoding="utf-8")
         self._sys(f"开始记录到: {path}")
@@ -927,7 +1318,7 @@ class SerialToolWindow(QMainWindow):
         self._sys("文件已达上限，已分片到新文件")
 
     def save_log(self) -> None:
-        default = str(self._log_dir() / f"{_ts_name()}.txt")
+        default = str(self._log_dir() / f"{self._log_basename()}.txt")
         path, _ = QFileDialog.getSaveFileName(self, "保存串口日志", default, "文本文件 (*.txt)")
         if not path:
             return
@@ -941,10 +1332,48 @@ class SerialToolWindow(QMainWindow):
             return
         self._sys(f"日志已保存: {path}")
 
+    # ---------- 配置 ----------
+    def _config_path(self) -> Path:
+        return Path(__file__).resolve().parent / "serial_tool_config.json"
+
+    def _load_config(self) -> None:
+        path = self._config_path()
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if isinstance(data.get("theme"), str) and data["theme"] in ("black", "eye", "day"):
+            self._theme = data["theme"]
+        cmds = data.get("commands")
+        if isinstance(cmds, list):
+            loaded = []
+            for c in cmds:
+                if isinstance(c, dict) and (c.get("name") or c.get("content")):
+                    loaded.append({
+                        "name": str(c.get("name") or ""),
+                        "content": str(c.get("content") or ""),
+                        "cycle": bool(c.get("cycle")),
+                    })
+            self._commands = loaded
+
+    def _save_config(self) -> None:
+        data = {"theme": self._theme, "commands": self._commands}
+        try:
+            self._config_path().write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
     # ---------- 主题 / 字体 ----------
-    def _apply_theme(self, checked: bool) -> None:
-        self._dark = checked
-        self.setStyleSheet(_DARK_QSS if checked else "")
+    def _set_theme(self, theme: str) -> None:
+        self._theme = theme
+        self._apply_theme_qss()
+        self._save_config()
+
+    def _apply_theme_qss(self) -> None:
+        self.setStyleSheet({"black": _DARK_QSS, "eye": _EYE_QSS}.get(self._theme, ""))
 
     def _reset_font(self) -> None:
         f = self.log_text.font()
