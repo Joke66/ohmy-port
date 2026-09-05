@@ -62,7 +62,7 @@ _HOTPLUG_MS = 2000
 _PLOT_WINDOW = 600
 
 _APP_NAME = "OhmyPort"
-_APP_VERSION = "1.1.0"
+_APP_VERSION = "1.2.0"
 _APP_AUTHOR = "ShineZhang"
 _APP_DATE = "2026-09-05"
 _APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
