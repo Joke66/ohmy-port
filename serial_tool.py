@@ -85,7 +85,7 @@ class LogFilter:
         return True
 
     def highlight_enabled(self) -> bool:
-        return self.mode in ("highlight", "include")
+        return self.mode in ("highlight", "include", "window")
 
 
 class SerialMonitor:
@@ -151,6 +151,40 @@ class SerialMonitor:
                     break
 
 
+class MatchedWindow(QWidget):
+    """命中行独立展示窗口。"""
+
+    closed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("命中结果 - 串口工具")
+        self.resize(640, 420)
+        v = QVBoxLayout(self)
+        bar = QHBoxLayout()
+        clear_btn = QPushButton("清空")
+        clear_btn.clicked.connect(self.clear)
+        bar.addWidget(clear_btn)
+        bar.addStretch(1)
+        v.addLayout(bar)
+        self.text = QTextEdit()
+        self.text.setReadOnly(True)
+        v.addWidget(self.text)
+
+    def clear(self) -> None:
+        self.text.clear()
+
+    def append_html(self, piece: str) -> None:
+        cursor = self.text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertHtml(piece)
+        self.text.setTextCursor(cursor)
+
+    def closeEvent(self, event) -> None:
+        self.closed.emit()
+        super().closeEvent(event)
+
+
 class SerialToolWindow(QMainWindow):
     line_signal = Signal(str, str)  # (文本, 方向: rx/tx/sys)
 
@@ -165,6 +199,8 @@ class SerialToolWindow(QMainWindow):
         self._hex = False
         self._auto_scroll = True
         self._record_file = None
+        self._matched_win: MatchedWindow | None = None
+        self._programmatic_close = False
         self._build()
         self.line_signal.connect(self._on_line, Qt.QueuedConnection)
         self.serial.set_receive_callback(self._on_receive)
@@ -205,6 +241,7 @@ class SerialToolWindow(QMainWindow):
         self.mode_combo.addItem("显示全部并高亮", "highlight")
         self.mode_combo.addItem("仅显示命中行", "include")
         self.mode_combo.addItem("排除命中行", "exclude")
+        self.mode_combo.addItem("单独窗口显示命中行", "window")
         self.mode_combo.currentIndexChanged.connect(self.apply_filter)
         filt.addWidget(self.mode_combo)
         self.case_check = QCheckBox("区分大小写")
@@ -297,6 +334,9 @@ class SerialToolWindow(QMainWindow):
             self._record_file.flush()
         if self._filter.visible(text):
             self._append_html(self._render_line(ts, direction, text))
+        if (self._filter.mode == "window" and self._matched_win is not None
+                and self._filter.matched(text)):
+            self._matched_win.append_html(self._render_line(ts, direction, text))
         self._scroll()
 
     def _render_line(self, ts: str, direction: str, text: str) -> str:
@@ -357,6 +397,44 @@ class SerialToolWindow(QMainWindow):
         self._filter.mode = self.mode_combo.currentData()
         self._filter.case_sensitive = self.case_check.isChecked()
         self._rerender()
+        self._sync_matched_window()
+
+    # ---------- 命中窗口 ----------
+    def _sync_matched_window(self) -> None:
+        if self._filter.mode == "window":
+            self._open_matched_window()
+            self._render_matched_window()
+        elif self._matched_win is not None:
+            self._programmatic_close = True
+            self._matched_win.close()
+            self._programmatic_close = False
+
+    def _open_matched_window(self) -> None:
+        if self._matched_win is None:
+            self._matched_win = MatchedWindow()
+            self._matched_win.closed.connect(self._on_matched_closed)
+        self._matched_win.show()
+        self._matched_win.raise_()
+
+    def _render_matched_window(self) -> None:
+        if self._matched_win is None:
+            return
+        self._matched_win.clear()
+        for ts, direction, text in self._buffer:
+            if self._filter.matched(text):
+                self._matched_win.append_html(self._render_line(ts, direction, text))
+
+    def _on_matched_closed(self) -> None:
+        self._matched_win = None
+        if self._programmatic_close:
+            return  # 程序内切换模式关闭，不改模式
+        idx = self.mode_combo.findData("highlight")
+        if idx >= 0:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(idx)
+            self.mode_combo.blockSignals(False)
+            self._filter.mode = "highlight"
+            self._rerender()
 
     # ---------- 保存 ----------
     def _log_dir(self) -> Path:
@@ -394,6 +472,10 @@ class SerialToolWindow(QMainWindow):
         if self._record_file is not None:
             self._record_file.close()
             self._record_file = None
+        if self._matched_win is not None:
+            self._programmatic_close = True
+            self._matched_win.close()
+            self._programmatic_close = False
         self.serial.disconnect()
         super().closeEvent(event)
 
