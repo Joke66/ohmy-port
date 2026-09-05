@@ -45,6 +45,6 @@ python -m PyInstaller --noconfirm --clean --windowed --onefile --name SerialTool
 
 ## 版本信息
 
-- 版本：1.0.0
+- 版本：1.1.0
 - 作者：zhangyaoxing
 - 日期：2026-09-05

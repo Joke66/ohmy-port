@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import collections
 import datetime
+import hashlib
 import json
 import queue
 import re
@@ -61,7 +62,7 @@ _HOTPLUG_MS = 2000
 _PLOT_WINDOW = 600
 
 _APP_NAME = "OhmyPort"
-_APP_VERSION = "1.0.1"
+_APP_VERSION = "1.1.0"
 _APP_AUTHOR = "ShineZhang"
 _APP_DATE = "2026-09-05"
 _APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
@@ -156,6 +157,7 @@ class SerialMonitor:
         self._callback = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self.rx_bytes = 0
 
     @staticmethod
     def list_ports() -> list[tuple[str, str]]:
@@ -213,6 +215,7 @@ class SerialMonitor:
                     chunk = self._serial.read(_READ_CHUNK)
                     if not chunk:
                         continue
+                    self.rx_bytes += len(chunk)
                     buf += chunk
                     *lines, buf = buf.split(b"\n")
                     if lines and self._callback is not None:
@@ -221,6 +224,7 @@ class SerialMonitor:
             except Exception:
                 if self._stop.is_set():
                     break
+                time.sleep(0.02)
 
 
 _PLOT_COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c"]
@@ -496,6 +500,7 @@ class CommandButton(QPushButton):
         menu.addAction("编辑", self._on_edit)
         menu.addAction("删除", self._on_delete)
         menu.exec(event.globalPos())
+        menu.deleteLater()
 
 
 class _WheelZoomFilter(QObject):
@@ -633,7 +638,6 @@ class SerialSession(QWidget):
         self._filter_enabled = False
         self._record_file = None
         self._last_highlight = 0.0
-        self._rx_bytes = 0
         self._tx_bytes = 0
         self._rate: collections.deque = collections.deque()
         self._known_ports: set[str] = set()
@@ -765,6 +769,9 @@ class SerialSession(QWidget):
         self.find_dir_combo.addItem("正序", False)
         self.find_dir_combo.currentIndexChanged.connect(self._on_find_dir_changed)
         fb.addWidget(self.find_dir_combo)
+        self.find_case_check = QCheckBox("区分大小写")
+        self.find_case_check.toggled.connect(self._on_find_case_changed)
+        fb.addWidget(self.find_case_check)
         fb.addWidget(_make_btn("上一个", self._search_prev))
         fb.addWidget(_make_btn("下一个", self._search_next))
         self.find_count_label = QLabel("")
@@ -872,9 +879,19 @@ class SerialSession(QWidget):
                 self.port_combo.setCurrentIndex(idx)
 
     def _check_hotplug(self) -> None:
-        if self.serial.is_connected:
-            return
         current = {d for d, _ in self.serial.list_ports()}
+        if self.serial.is_connected:
+            port = self.port_combo.currentData()
+            if port and port not in current:
+                # 连接中的端口被拔出：自动断开并提示
+                self._known_ports = current
+                self.serial.disconnect()
+                self.connect_btn.setText("打开串口")
+                self._sys(f"串口 {port} 已断开")
+                if self._record_file is not None:
+                    self._stop_record()
+                self.window.update_session_title(self)
+            return
         if current != self._known_ports:
             self._known_ports = current
             self.refresh_ports()
@@ -1002,6 +1019,11 @@ class SerialSession(QWidget):
             body = payload
         return f"[{ts}] {self._dir_mark(direction)}{body}"
 
+    def _record_line(self, ts: str, direction: str, payload) -> str:
+        # 记录固定为文本形式，不受「HEX 显示」切换影响
+        body = self._payload_text(payload)
+        return f"[{ts}] {self._dir_mark(direction)}{body}"
+
     def _flush(self) -> None:
         items: list[tuple[str, str, object]] = []
         while True:
@@ -1015,14 +1037,12 @@ class SerialSession(QWidget):
         matched_pieces: list[str] = []
         rx_texts: list[str] = []
         for ts, direction, payload in items:
-            if self._paused and direction != "sys":
-                continue
             self._buffer.append((ts, direction, payload))
             text = self._payload_text(payload)
-            if direction == "rx":
-                self._rx_bytes += len(payload) + 1 if isinstance(payload, bytes) else 0
             if self._record_file is not None:
-                self._record_file.write(self._format_line(ts, direction, payload) + "\n")
+                self._record_file.write(self._record_line(ts, direction, payload) + "\n")
+            if self._paused and direction != "sys":
+                continue  # 暂停只冻结显示（日志+绘图），后台仍缓冲/记录
             if self._filter.visible(text):
                 pieces.append(self._format_line(ts, direction, payload))
             if self._filter.mode == "split" and self._filter.matched(text):
@@ -1146,15 +1166,21 @@ class SerialSession(QWidget):
             self._update_search_count()
             self._apply_highlight(self.log_text)
 
+    def _on_find_case_changed(self) -> None:
+        if self._search_text:
+            self._do_search()
+
     def _scan_matches(self) -> list:
         kw = self._search_text
         matches: list = []
         if kw:
+            flags = (QTextDocument.FindFlag.FindCaseSensitively
+                     if self.find_case_check.isChecked() else QTextDocument.FindFlag(0))
             doc = self.log_text.document()
-            cursor = doc.find(kw, 0, QTextDocument.FindFlag(0))
+            cursor = doc.find(kw, 0, flags)
             while not cursor.isNull():
                 matches.append(cursor)
-                cursor = doc.find(kw, cursor.position(), QTextDocument.FindFlag(0))
+                cursor = doc.find(kw, cursor.position(), flags)
         return matches
 
     def _search_activate(self) -> None:
@@ -1229,19 +1255,20 @@ class SerialSession(QWidget):
     # ---------- 统计 ----------
     def _update_stats(self) -> None:
         now = time.monotonic()
-        self._rate.append((now, self._rx_bytes, self._tx_bytes))
+        rx = self.serial.rx_bytes
+        self._rate.append((now, rx, self._tx_bytes))
         while self._rate and now - self._rate[0][0] > 1.0:
             self._rate.popleft()
         if len(self._rate) >= 2:
             t0, rx0, tx0 = self._rate[0]
             dt = now - t0
-            rx_rate = (self._rx_bytes - rx0) / dt if dt > 0 else 0
+            rx_rate = (rx - rx0) / dt if dt > 0 else 0
             tx_rate = (self._tx_bytes - tx0) / dt if dt > 0 else 0
             self.stat_label.setText(
-                f"RX: {_fmt_bytes(self._rx_bytes)} ({_fmt_bytes(int(rx_rate))}/s)   "
+                f"RX: {_fmt_bytes(rx)} ({_fmt_bytes(int(rx_rate))}/s)   "
                 f"TX: {_fmt_bytes(self._tx_bytes)} ({_fmt_bytes(int(tx_rate))}/s)")
         else:
-            self.stat_label.setText(f"RX: {_fmt_bytes(self._rx_bytes)}   TX: {_fmt_bytes(self._tx_bytes)}")
+            self.stat_label.setText(f"RX: {_fmt_bytes(rx)}   TX: {_fmt_bytes(self._tx_bytes)}")
 
     # ---------- 高亮 ----------
     def _maybe_highlight(self) -> None:
@@ -1367,6 +1394,7 @@ class SerialSession(QWidget):
         menu.addAction("保存日志", self.save_log)
         menu.addAction("打开日志目录", self.window._open_log_dir)
         menu.exec(self.log_text.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
     def toggle_record(self) -> None:
         if self._record_file is not None:
@@ -1406,8 +1434,7 @@ class SerialSession(QWidget):
         try:
             with open(path, "w", encoding="utf-8") as f:
                 for ts, direction, payload in self._buffer:
-                    if self._filter.visible(self._payload_text(payload)):
-                        f.write(self._format_line(ts, direction, payload) + "\n")
+                    f.write(self._record_line(ts, direction, payload) + "\n")
         except OSError as exc:
             QMessageBox.warning(self, "保存失败", str(exc))
             return
@@ -1421,7 +1448,7 @@ class SerialToolWindow(QMainWindow):
         self.resize(980, 720)
         self._sessions: list[SerialSession] = []
         self._theme = "black"
-        self._remembered: dict = {}
+        self._remembered_sessions: list[dict] = []
         self._pages: list[str] = ["第1页"]
         self._commands: list[dict] = []
         self._cycle_enabled = False
@@ -1444,9 +1471,11 @@ class SerialToolWindow(QMainWindow):
         self.plot_window.finished.connect(lambda _r: self.plot_action.setChecked(False))
         self._timer_send = QTimer(self)
         self._timer_send.timeout.connect(self._timer_send_tick)
-        self._add_session()
-        if self._sessions:
-            self._apply_remembered_state(self._sessions[0])
+        for _ in range(max(1, len(self._remembered_sessions))):
+            self._add_session()
+        for i, s in enumerate(self._sessions):
+            if i < len(self._remembered_sessions):
+                self._apply_remembered_state(s, self._remembered_sessions[i])
         self._apply_background()
 
     # ---------- UI ----------
@@ -1556,13 +1585,15 @@ class SerialToolWindow(QMainWindow):
         w = self.session_tabs.currentWidget()
         return w if isinstance(w, SerialSession) else None
 
-    def _apply_remembered_state(self, s: SerialSession) -> None:
-        r = self._remembered or {}
+    def _apply_remembered_state(self, s: SerialSession, r: dict) -> None:
         port = r.get("port")
         if port:
             idx = s.port_combo.findData(port)
             if idx >= 0:
                 s.port_combo.setCurrentIndex(idx)
+        baud = r.get("baud")
+        if baud:
+            s.baud_combo.setCurrentText(str(baud))
         if r.get("filter_keywords"):
             s.keyword_edit.setText(r["filter_keywords"])
         mode = r.get("filter_mode")
@@ -1577,6 +1608,8 @@ class SerialToolWindow(QMainWindow):
             f.setPointSize(fs)
             s.log_text.setFont(f)
             s.matched_text.setFont(f)
+        if r.get("filter_enabled"):
+            s._enable_filter()
 
     def _add_session(self) -> None:
         s = SerialSession(self, len(self._sessions))
@@ -1635,12 +1668,11 @@ class SerialToolWindow(QMainWindow):
         if s is None or not s.serial.is_connected:
             return
         checked = [i for i, c in enumerate(self._commands) if c.get("cycle") and c.get("content")]
-        if checked:
-            idx = checked[self._cycle_idx % len(checked)]
-            self._cycle_idx += 1
-            self._send_command(idx)
-        elif s.send_combo.currentText():
-            s.send_raw()
+        if not checked:
+            return
+        idx = checked[self._cycle_idx % len(checked)]
+        self._cycle_idx += 1
+        self._send_command(idx)
 
     def _set_cycle_enabled(self, enabled: bool) -> None:
         self._cycle_enabled = enabled
@@ -1914,13 +1946,20 @@ class SerialToolWindow(QMainWindow):
             self._bg_blur = max(0, min(50, data["bg_blur"]))
         if isinstance(data.get("bg_enabled"), bool):
             self._bg_enabled = data["bg_enabled"]
-        self._remembered = {
-            "port": data.get("port"),
-            "filter_keywords": data.get("filter_keywords", ""),
-            "filter_mode": data.get("filter_mode", "highlight"),
-            "filter_case": bool(data.get("filter_case")),
-            "font_size": data.get("font_size"),
-        }
+        sessions = data.get("sessions")
+        if isinstance(sessions, list) and sessions:
+            self._remembered_sessions = [d for d in sessions if isinstance(d, dict)]
+        else:
+            # 兼容旧版单会话字段
+            self._remembered_sessions = [{
+                "port": data.get("port"),
+                "baud": data.get("baud"),
+                "filter_keywords": data.get("filter_keywords", ""),
+                "filter_mode": data.get("filter_mode", "highlight"),
+                "filter_case": bool(data.get("filter_case")),
+                "filter_enabled": bool(data.get("filter_enabled")),
+                "font_size": data.get("font_size"),
+            }]
         pages = data.get("pages")
         if isinstance(pages, list) and pages:
             self._pages = [str(p) for p in pages]
@@ -1941,6 +1980,18 @@ class SerialToolWindow(QMainWindow):
             self._commands = loaded
 
     def _save_config(self) -> None:
+        sessions = []
+        for s in self._sessions:
+            fs = s.log_text.font().pointSize()
+            sessions.append({
+                "port": s.port_combo.currentData(),
+                "baud": s.baud_combo.currentText(),
+                "filter_keywords": s.keyword_edit.text(),
+                "filter_mode": s.mode_combo.currentData(),
+                "filter_case": s.case_check.isChecked(),
+                "filter_enabled": s._filter_enabled,
+                "font_size": fs if fs > 0 else 10,
+            })
         data = {
             "theme": self._theme,
             "pages": self._pages,
@@ -1952,17 +2003,8 @@ class SerialToolWindow(QMainWindow):
             "bg_image": self._bg_image,
             "bg_blur": self._bg_blur,
             "bg_enabled": self._bg_enabled,
+            "sessions": sessions,
         }
-        s = self._sessions[0] if self._sessions else None
-        if s is not None:
-            fs = s.log_text.font().pointSize()
-            data.update({
-                "port": s.port_combo.currentData(),
-                "filter_keywords": s.keyword_edit.text(),
-                "filter_mode": s.mode_combo.currentData(),
-                "filter_case": s.case_check.isChecked(),
-                "font_size": fs if fs > 0 else 10,
-            })
         try:
             self._config_path().write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2062,15 +2104,24 @@ class SerialToolWindow(QMainWindow):
             _clear()
             return
         cache_dir = self._base_dir() / "bg_cache"
-        bg_path = cache_dir / "bg.png"
         try:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            img = Image.open(src).convert("RGB")
-            img.thumbnail((1920, 1080), Image.LANCZOS)
-            img.filter(ImageFilter.GaussianBlur(max(1, self._bg_blur * 3))).save(bg_path)
-        except Exception:
+            st = src.stat()
+            key = hashlib.md5(
+                f"{src}|{st.st_mtime}|{st.st_size}|{self._bg_blur}".encode("utf-8")
+            ).hexdigest()[:12]
+        except OSError:
             _clear()
             return
+        bg_path = cache_dir / f"bg_{key}.png"
+        if not bg_path.exists():
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                img = Image.open(src).convert("RGB")
+                img.thumbnail((1920, 1080), Image.LANCZOS)
+                img.filter(ImageFilter.GaussianBlur(max(1, self._bg_blur * 3))).save(bg_path)
+            except Exception:
+                _clear()
+                return
         central.set_bg_pixmap(QPixmap(bg_path.as_posix()))
         self._set_containers_transparent(True)
 
