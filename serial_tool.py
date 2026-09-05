@@ -32,15 +32,16 @@ from serial.tools import list_ports
 
 import pyqtgraph as pg
 import qdarktheme
+from PIL import Image, ImageFilter
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextDocument
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QShortcut, QTextCharFormat, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTableWidget,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QPlainTextEdit, QPushButton, QSlider, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
+    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 _BAUDS = ["115200", "57600", "38400", "19200", "9600", "4800", "2400", "921600"]
@@ -509,6 +510,69 @@ class _WheelZoomFilter(QObject):
         return False
 
 
+class BgCentralWidget(QWidget):
+    """整窗口背景层：在 paintEvent 中绘制一张（模糊）图片，作为唯一背景。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._bg_pixmap: QPixmap | None = None
+        self._bg_scaled: QPixmap | None = None
+
+    def set_bg_pixmap(self, pixmap: QPixmap | None) -> None:
+        self._bg_pixmap = pixmap
+        self._bg_scaled = None
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if self._bg_pixmap is not None and not self._bg_pixmap.isNull():
+            if self._bg_scaled is None or self._bg_scaled.size() != self.size():
+                self._bg_scaled = self._bg_pixmap.scaled(
+                    self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+                )
+            p = QPainter(self)
+            p.drawPixmap((self.width() - self._bg_scaled.width()) // 2,
+                         (self.height() - self._bg_scaled.height()) // 2,
+                         self._bg_scaled)
+            p.end()
+        else:
+            super().paintEvent(event)
+
+
+class BgPlainTextEdit(QPlainTextEdit):
+    """透明日志框：背景透明，露出下方整窗口的唯一背景图。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._default_base = self.palette().brush(QPalette.Base)
+        self._default_window = self.palette().brush(QPalette.Window)
+        self._default_autofill = self.autoFillBackground()
+        self._default_vp_autofill = self.viewport().autoFillBackground()
+
+    def set_transparent(self, flag: bool) -> None:
+        pal = self.palette()
+        if flag:
+            pal.setBrush(QPalette.Base, QColor(0, 0, 0, 0))
+            pal.setBrush(QPalette.Window, QColor(0, 0, 0, 0))
+            self.setAutoFillBackground(False)
+            self.setStyleSheet("QPlainTextEdit { background: transparent; }")
+            self.viewport().setAttribute(Qt.WA_TranslucentBackground, True)
+            self.viewport().setAutoFillBackground(False)
+        else:
+            pal.setBrush(QPalette.Base, self._default_base)
+            pal.setBrush(QPalette.Window, self._default_window)
+            self.setAutoFillBackground(self._default_autofill)
+            self.setStyleSheet("")
+            self.viewport().setAttribute(Qt.WA_TranslucentBackground, False)
+            self.viewport().setAutoFillBackground(self._default_vp_autofill)
+        self.setPalette(pal)
+        # 重新抛光，确保样式表/调色板变更立即生效
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.viewport().style().unpolish(self.viewport())
+        self.viewport().style().polish(self.viewport())
+        self.update()
+
+
 class CycleDialog(QDialog):
     """定时循环发送设置弹窗：启用/间隔/勾选参与循环的命令。"""
 
@@ -710,7 +774,7 @@ class SerialSession(QWidget):
         layout.addWidget(self.find_bar)
 
         # 上：日志内容
-        self.log_text = QPlainTextEdit()
+        self.log_text = BgPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumBlockCount(_MAX_LINES)
         self.log_text.installEventFilter(self.window._wheel_filter)
@@ -734,7 +798,7 @@ class SerialSession(QWidget):
         mp_bar.addWidget(_make_btn("清空", self._clear_matched))
         mp_bar.addStretch(1)
         mp.addLayout(mp_bar)
-        self.matched_text = QPlainTextEdit()
+        self.matched_text = BgPlainTextEdit()
         self.matched_text.setReadOnly(True)
         self.matched_text.setMaximumBlockCount(_MAX_LINES)
         self.matched_text.installEventFilter(self.window._wheel_filter)
@@ -921,7 +985,7 @@ class SerialSession(QWidget):
         self._pending.put((_now(), "sys", text))
 
     def _dir_mark(self, d: str) -> str:
-        return {"rx": "", "tx": ">>>>>>>>>>>", "sys": "◆ "}.get(d, "")
+        return {"rx": "", "tx": "SEND >>>>>>>>>>", "sys": "◆ "}.get(d, "")
 
     def _payload_text(self, payload) -> str:
         if isinstance(payload, bytes):
@@ -1366,6 +1430,10 @@ class SerialToolWindow(QMainWindow):
         self._log_dir_override: str | None = None
         self._auto_record = True
         self._shard_mb = 5
+        self._bg_dir = str(Path(__file__).resolve().parent / "background")
+        self._bg_image = ""
+        self._bg_blur = 10
+        self._bg_enabled = False
         self._cycle_idx = 0
         self._wheel_filter = _WheelZoomFilter(self)
         self._load_config()
@@ -1379,10 +1447,12 @@ class SerialToolWindow(QMainWindow):
         self._add_session()
         if self._sessions:
             self._apply_remembered_state(self._sessions[0])
+        self._apply_background()
 
     # ---------- UI ----------
     def _build(self) -> None:
-        central = QWidget()
+        central = BgCentralWidget()
+        central.setObjectName("centralWidget")
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(6, 4, 6, 4)
@@ -1472,6 +1542,9 @@ class SerialToolWindow(QMainWindow):
         shard_action = QAction("日志分片大小...", self)
         shard_action.triggered.connect(self._set_shard_size)
         settings_menu.addAction(shard_action)
+        bg_action = QAction("背景皮肤...", self)
+        bg_action.triggered.connect(self._open_background_dialog)
+        settings_menu.addAction(bg_action)
 
         help_menu = menubar.addMenu("帮助")
         about = QAction("关于", self)
@@ -1508,6 +1581,8 @@ class SerialToolWindow(QMainWindow):
     def _add_session(self) -> None:
         s = SerialSession(self, len(self._sessions))
         self._sessions.append(s)
+        if self._bg_enabled and self._bg_image:
+            self._set_session_transparent(s, True)
         idx = self.session_tabs.addTab(s, s.title())
         self.session_tabs.setCurrentIndex(idx)
         self.plot_window.set_sessions(self._sessions)
@@ -1831,6 +1906,14 @@ class SerialToolWindow(QMainWindow):
             self._shard_mb = max(1, data["shard_mb"])
         if isinstance(data.get("log_dir"), str) and data["log_dir"]:
             self._log_dir_override = data["log_dir"]
+        if isinstance(data.get("bg_dir"), str) and data["bg_dir"]:
+            self._bg_dir = data["bg_dir"]
+        if isinstance(data.get("bg_image"), str):
+            self._bg_image = data["bg_image"]
+        if isinstance(data.get("bg_blur"), int):
+            self._bg_blur = max(0, min(50, data["bg_blur"]))
+        if isinstance(data.get("bg_enabled"), bool):
+            self._bg_enabled = data["bg_enabled"]
         self._remembered = {
             "port": data.get("port"),
             "filter_keywords": data.get("filter_keywords", ""),
@@ -1865,6 +1948,10 @@ class SerialToolWindow(QMainWindow):
             "auto_record": self._auto_record,
             "shard_mb": self._shard_mb,
             "log_dir": self._log_dir_override,
+            "bg_dir": self._bg_dir,
+            "bg_image": self._bg_image,
+            "bg_blur": self._bg_blur,
+            "bg_enabled": self._bg_enabled,
         }
         s = self._sessions[0] if self._sessions else None
         if s is not None:
@@ -1902,6 +1989,90 @@ class SerialToolWindow(QMainWindow):
 
     def _apply_theme_qss(self) -> None:
         qdarktheme.setup_theme(**_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
+
+    # ---------- 背景皮肤 ----------
+    def _refresh_bg_combo(self, combo: QComboBox) -> None:
+        combo.clear()
+        combo.addItem("无", "")
+        d = Path(self._bg_dir)
+        if d.is_dir():
+            exts = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
+            for f in sorted(d.iterdir()):
+                if f.is_file() and f.suffix.lower() in exts:
+                    combo.addItem(f.name, f.name)
+        if self._bg_image:
+            idx = combo.findData(self._bg_image)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
+    def _open_background_dialog(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("背景皮肤")
+        form = QFormLayout(dlg)
+        combo = QComboBox()
+        self._refresh_bg_combo(combo)
+        form.addRow("背景图片", combo)
+        blur_slider = QSlider(Qt.Horizontal)
+        blur_slider.setRange(0, 50)
+        blur_slider.setValue(self._bg_blur)
+        form.addRow("模糊强度", blur_slider)
+        enable_check = QCheckBox("启用背景")
+        enable_check.setChecked(self._bg_enabled)
+        form.addRow("", enable_check)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._bg_image = combo.currentData() or ""
+        self._bg_blur = blur_slider.value()
+        self._bg_enabled = enable_check.isChecked()
+        self._apply_background()
+        self._save_config()
+
+    def _set_session_transparent(self, s, flag: bool) -> None:
+        s.setAttribute(Qt.WA_TranslucentBackground, flag)
+        for panel in (s.serial_params_panel, s.find_bar, s.matched_panel):
+            panel.setAttribute(Qt.WA_TranslucentBackground, flag)
+        s.log_text.set_transparent(flag)
+        s.matched_text.set_transparent(flag)
+
+    def _set_containers_transparent(self, flag: bool) -> None:
+        for s in self._sessions:
+            self._set_session_transparent(s, flag)
+        self.send_assist_panel.setAttribute(Qt.WA_TranslucentBackground, flag)
+        for tw in (self.session_tabs, self.command_tabs):
+            tw.setAttribute(Qt.WA_TranslucentBackground, flag)
+            for pane in tw.findChildren(QStackedWidget):
+                pane.setAttribute(Qt.WA_TranslucentBackground, flag)
+
+    def _apply_background(self) -> None:
+        central = self.centralWidget()
+
+        def _clear():
+            central.set_bg_pixmap(None)
+            self._set_containers_transparent(False)
+
+        if not self._bg_enabled or not self._bg_image:
+            _clear()
+            return
+        src = Path(self._bg_dir) / self._bg_image
+        if not src.exists():
+            _clear()
+            return
+        cache_dir = self._base_dir() / "bg_cache"
+        bg_path = cache_dir / "bg.png"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            img = Image.open(src).convert("RGB")
+            img.thumbnail((1920, 1080), Image.LANCZOS)
+            img.filter(ImageFilter.GaussianBlur(max(1, self._bg_blur * 3))).save(bg_path)
+        except Exception:
+            _clear()
+            return
+        central.set_bg_pixmap(QPixmap(bg_path.as_posix()))
+        self._set_containers_transparent(True)
 
     def _show_about(self) -> None:
         box = QMessageBox(self)

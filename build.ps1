@@ -48,7 +48,6 @@ python -m PyInstaller --noconfirm --clean --windowed --onefile `
     --exclude-module PyQt5 `
     --exclude-module matplotlib `
     --exclude-module scipy `
-    --exclude-module PIL `
     --exclude-module pytest `
     serial_tool.py
 if ($LASTEXITCODE -ne 0) {

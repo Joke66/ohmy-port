@@ -7,6 +7,7 @@ __pycache__/
 # 运行时产物（日志 / 用户偏好）
 Logs/
 serial_tool_config.json
+bg_cache/
 
 # PyInstaller 构建产物
 build/
