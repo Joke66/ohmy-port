@@ -34,7 +34,7 @@ import pyqtgraph as pg
 import qdarktheme
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QTextCharFormat, QTextDocument
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
@@ -48,6 +48,8 @@ _ENCODINGS = [("UTF-8", "utf-8"), ("GBK", "gbk"), ("ASCII", "ascii")]
 _NEWLINES = [("无", ""), ("\\r", "\r"), ("\\n", "\n"), ("\\r\\n", "\r\n")]
 _HL_BG = QColor("#fff59d")
 _HL_FG = QColor("#000000")
+_SEARCH_BG = QColor("#ffb74d")
+_SEARCH_BG_CURRENT = QColor("#ff9800")
 
 # 性能 / 行为参数
 _MAX_LINES = 50_000
@@ -59,8 +61,9 @@ _PLOT_WINDOW = 600
 
 _APP_NAME = "OhmyPort"
 _APP_VERSION = "1.0.0"
-_APP_AUTHOR = "zhangyaoxing"
+_APP_AUTHOR = "ShineZhang"
 _APP_DATE = "2026-09-05"
+_APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
 
 _THEME_CFG = {
     "black": {"theme": "dark"},
@@ -570,6 +573,12 @@ class SerialSession(QWidget):
         self._tx_bytes = 0
         self._rate: collections.deque = collections.deque()
         self._known_ports: set[str] = set()
+        self._search_text = ""
+        self._search_matches: list = []
+        self._search_current = -1
+        self._search_reverse = True
+        self._last_search_refresh = 0.0
+        self._suppress_scroll = False
         self._build()
         self.serial.set_receive_callback(self._on_receive_batch)
         self._flush_timer = QTimer(self)
@@ -678,6 +687,28 @@ class SerialSession(QWidget):
         filt.addWidget(self.filter_btn)
         layout.addLayout(filt)
 
+        # 查找栏（Ctrl+F 显示，Esc 关闭）
+        self.find_bar = QWidget()
+        fb = QHBoxLayout(self.find_bar)
+        fb.setContentsMargins(0, 0, 0, 0)
+        fb.addWidget(QLabel("查找"))
+        self.find_input = QLineEdit()
+        self.find_input.setPlaceholderText("输入关键词，回车查找")
+        self.find_input.returnPressed.connect(self._search_activate)
+        fb.addWidget(self.find_input, 1)
+        self.find_dir_combo = QComboBox()
+        self.find_dir_combo.addItem("倒序", True)
+        self.find_dir_combo.addItem("正序", False)
+        self.find_dir_combo.currentIndexChanged.connect(self._on_find_dir_changed)
+        fb.addWidget(self.find_dir_combo)
+        fb.addWidget(_make_btn("上一个", self._search_prev))
+        fb.addWidget(_make_btn("下一个", self._search_next))
+        self.find_count_label = QLabel("")
+        fb.addWidget(self.find_count_label)
+        fb.addWidget(_make_btn("✕", self._hide_find_bar))
+        self.find_bar.setVisible(False)
+        layout.addWidget(self.find_bar)
+
         # 上：日志内容
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
@@ -685,7 +716,13 @@ class SerialSession(QWidget):
         self.log_text.installEventFilter(self.window._wheel_filter)
         self.log_text.setContextMenuPolicy(Qt.CustomContextMenu)
         self.log_text.customContextMenuRequested.connect(self._show_log_menu)
+        self.log_text.verticalScrollBar().valueChanged.connect(self._on_log_scrolled)
         layout.addWidget(self.log_text, 3)
+
+        self.find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self.find_shortcut.activated.connect(self._show_find_bar)
+        self._esc_shortcut = QShortcut(QKeySequence("Esc"), self.find_bar)
+        self._esc_shortcut.activated.connect(self._hide_find_bar)
 
         # 下：命中结果面板
         self.matched_panel = QWidget()
@@ -928,10 +965,14 @@ class SerialSession(QWidget):
                 matched_pieces.append(self._format_line(ts, direction, payload))
             if direction == "rx":
                 rx_texts.append(text)
-        if pieces:
-            self.log_text.appendPlainText("\n".join(pieces))
-        if matched_pieces:
-            self.matched_text.appendPlainText("\n".join(matched_pieces))
+        self._suppress_scroll = True
+        try:
+            if pieces:
+                self.log_text.appendPlainText("\n".join(pieces))
+            if matched_pieces:
+                self.matched_text.appendPlainText("\n".join(matched_pieces))
+        finally:
+            self._suppress_scroll = False
         if rx_texts:
             self.window.plot_window.feed_from_session(self, rx_texts)
         if self._record_file is not None:
@@ -942,24 +983,37 @@ class SerialSession(QWidget):
         if not self._frozen:
             self._scroll()
         self._maybe_highlight()
+        if self._search_text:
+            now = time.monotonic()
+            if now - self._last_search_refresh > 0.5:
+                self._last_search_refresh = now
+                self._refresh_search()
         if self.auto_enable.isChecked():
             for ts, direction, payload in items:
                 if direction == "rx":
                     self._check_auto_reply(self._payload_text(payload))
 
     def _scroll(self) -> None:
-        sb = self.log_text.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        self._suppress_scroll = True
+        try:
+            sb = self.log_text.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        finally:
+            self._suppress_scroll = False
 
     def _rerender(self) -> None:
-        self.log_text.clear()
-        pieces: list[str] = []
-        for ts, direction, payload in self._buffer:
-            text = self._payload_text(payload)
-            if self._filter.visible(text):
-                pieces.append(self._format_line(ts, direction, payload))
-        if pieces:
-            self.log_text.appendPlainText("\n".join(pieces))
+        self._suppress_scroll = True
+        try:
+            self.log_text.clear()
+            pieces: list[str] = []
+            for ts, direction, payload in self._buffer:
+                text = self._payload_text(payload)
+                if self._filter.visible(text):
+                    pieces.append(self._format_line(ts, direction, payload))
+            if pieces:
+                self.log_text.appendPlainText("\n".join(pieces))
+        finally:
+            self._suppress_scroll = False
         self._scroll()
         self._render_matched()
         self._apply_highlight(self.log_text)
@@ -981,10 +1035,127 @@ class SerialSession(QWidget):
         if not self._paused:
             self._rerender()
 
+    def _set_frozen(self, frozen: bool) -> None:
+        if self._frozen == frozen:
+            return
+        self._frozen = frozen
+        self.fixed_check.blockSignals(True)
+        self.fixed_check.setChecked(frozen)
+        self.fixed_check.blockSignals(False)
+
     def _on_fixed_toggle(self, checked: bool) -> None:
-        self._frozen = checked
+        self._set_frozen(checked)
         if not checked:
             self._scroll()
+
+    def _on_log_scrolled(self, _value: int) -> None:
+        if self._suppress_scroll:
+            return
+        sb = self.log_text.verticalScrollBar()
+        dist = sb.maximum() - sb.value()
+        page = max(1, sb.pageStep())
+        if self._frozen and dist < page / 10:
+            self._set_frozen(False)
+        elif not self._frozen and dist > page / 3:
+            self._set_frozen(True)
+
+    # ---------- 查找 ----------
+    def _show_find_bar(self) -> None:
+        self.find_bar.setVisible(True)
+        self.find_input.setFocus()
+        self.find_input.selectAll()
+
+    def _hide_find_bar(self) -> None:
+        self.find_bar.setVisible(False)
+        self.find_input.clear()
+
+    def _on_find_dir_changed(self) -> None:
+        self._search_reverse = bool(self.find_dir_combo.currentData())
+        if self._search_matches:
+            self._search_current = len(self._search_matches) - 1 if self._search_reverse else 0
+            self._goto_match(self._search_current)
+            self._update_search_count()
+            self._apply_highlight(self.log_text)
+
+    def _scan_matches(self) -> list:
+        kw = self._search_text
+        matches: list = []
+        if kw:
+            doc = self.log_text.document()
+            cursor = doc.find(kw, 0, QTextDocument.FindFlag(0))
+            while not cursor.isNull():
+                matches.append(cursor)
+                cursor = doc.find(kw, cursor.position(), QTextDocument.FindFlag(0))
+        return matches
+
+    def _search_activate(self) -> None:
+        if self.find_input.text() != self._search_text:
+            self._do_search()
+            if self._search_matches:
+                self._set_frozen(True)
+        else:
+            self._search_next()
+
+    def _do_search(self) -> None:
+        self._search_text = self.find_input.text()
+        self._search_matches = self._scan_matches()
+        if self._search_matches:
+            self._search_current = len(self._search_matches) - 1 if self._search_reverse else 0
+            self._goto_match(self._search_current)
+        else:
+            self._search_current = -1
+        self._update_search_count()
+        self._apply_highlight(self.log_text)
+
+    def _refresh_search(self) -> None:
+        self._search_matches = self._scan_matches()
+        if not self._search_matches:
+            self._search_current = -1
+        elif self._search_current < 0 or self._search_current >= len(self._search_matches):
+            self._search_current = len(self._search_matches) - 1 if self._search_reverse else 0
+        self._update_search_count()
+        self._apply_highlight(self.log_text)
+
+    def _goto_match(self, idx: int) -> None:
+        if 0 <= idx < len(self._search_matches):
+            self._suppress_scroll = True
+            try:
+                self.log_text.setTextCursor(self._search_matches[idx])
+                self.log_text.ensureCursorVisible()
+            finally:
+                self._suppress_scroll = False
+
+    def _update_search_count(self) -> None:
+        n = len(self._search_matches)
+        if not self._search_text:
+            self.find_count_label.setText("")
+        elif n == 0:
+            self.find_count_label.setText("0/0")
+        else:
+            cur = self._search_current + 1 if self._search_current >= 0 else 0
+            self.find_count_label.setText(f"{cur}/{n}")
+
+    def _search_next(self) -> None:
+        if not self._search_matches:
+            return
+        if self._search_reverse:
+            self._search_current = (self._search_current - 1) % len(self._search_matches)
+        else:
+            self._search_current = (self._search_current + 1) % len(self._search_matches)
+        self._goto_match(self._search_current)
+        self._update_search_count()
+        self._apply_highlight(self.log_text)
+
+    def _search_prev(self) -> None:
+        if not self._search_matches:
+            return
+        if self._search_reverse:
+            self._search_current = (self._search_current + 1) % len(self._search_matches)
+        else:
+            self._search_current = (self._search_current - 1) % len(self._search_matches)
+        self._goto_match(self._search_current)
+        self._update_search_count()
+        self._apply_highlight(self.log_text)
 
     # ---------- 统计 ----------
     def _update_stats(self) -> None:
@@ -1013,10 +1184,9 @@ class SerialSession(QWidget):
         if self._filter.mode == "split":
             self._apply_highlight(self.matched_text)
 
-    def _apply_highlight(self, widget: QPlainTextEdit) -> None:
+    def _filter_selections(self, widget: QPlainTextEdit) -> list:
         if self._hex or not self._filter.highlight_enabled() or not self._filter.keywords:
-            widget.setExtraSelections([])
-            return
+            return []
         fmt = QTextCharFormat()
         fmt.setBackground(_HL_BG)
         fmt.setForeground(_HL_FG)
@@ -1032,7 +1202,27 @@ class SerialSession(QWidget):
                 sel.format = fmt
                 selections.append(sel)
                 cursor = doc.find(kw, cursor.position(), flags)
-        widget.setExtraSelections(selections)
+        return selections
+
+    def _search_selections(self, widget: QPlainTextEdit) -> list:
+        if widget is not self.log_text or not self._search_matches:
+            return []
+        fmt = QTextCharFormat()
+        fmt.setBackground(_SEARCH_BG)
+        fmt.setForeground(QColor("#000000"))
+        cur_fmt = QTextCharFormat()
+        cur_fmt.setBackground(_SEARCH_BG_CURRENT)
+        cur_fmt.setForeground(QColor("#000000"))
+        selections: list = []
+        for i, cursor in enumerate(self._search_matches):
+            sel = QTextEdit.ExtraSelection()
+            sel.cursor = cursor
+            sel.format = cur_fmt if i == self._search_current else fmt
+            selections.append(sel)
+        return selections
+
+    def _apply_highlight(self, widget: QPlainTextEdit) -> None:
+        widget.setExtraSelections(self._filter_selections(widget) + self._search_selections(widget))
 
     # ---------- 过滤 ----------
     def toggle_filter(self) -> None:
@@ -1709,13 +1899,19 @@ class SerialToolWindow(QMainWindow):
         qdarktheme.setup_theme(**_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self, "关于",
+        box = QMessageBox(self)
+        box.setWindowTitle("关于")
+        box.setTextFormat(Qt.RichText)
+        box.setText(
             f"<h3>{_APP_NAME} v{_APP_VERSION}</h3>"
             f"<p>作者：{_APP_AUTHOR}<br>发布日期：{_APP_DATE}</p>"
+            f"<p>仓库：<a href='{_APP_URL}'>{_APP_URL}</a></p>"
             "<p>多串口并行调试工具：数值绘图、日志自动保存、多关键词过滤、"
             "自动应答、SSCOM 式命令发送。</p>",
         )
+        for label in box.findChildren(QLabel):
+            label.setOpenExternalLinks(True)
+        box.exec()
 
     def closeEvent(self, event) -> None:
         self._save_config()
