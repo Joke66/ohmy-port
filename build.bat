@@ -19,7 +19,8 @@ if exist dist rmdir /s /q dist
 
 echo [3/3] 开始打包...
 python -m PyInstaller --noconfirm --clean --windowed --onefile ^
-  --name SerialTool ^
+  --name OhmyPort ^
+  --icon my-icon.png ^
   --collect-all qdarktheme ^
   serial_tool.py
 

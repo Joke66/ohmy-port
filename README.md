@@ -1,4 +1,4 @@
-# 串口工具（SerialTool）
+# OhmyPort
 
 基于 Python + PySide6 的独立串口调试工具。
 

@@ -1,16 +1,18 @@
-"""串口工具（独立工具）：实时串口日志 + 多关键词过滤 + 时间戳保存 + 高级串口调试。
+"""OhmyPort（串口工具）：多串口并行监听 + 实时日志 + 多关键词过滤 + 数值绘图。
 
 独立于「老化板上位机」，可单独运行：
     python serial_tool.py
 
-也可由主工具通过「打开串口工具」按钮拉起。依赖：pyserial + PySide6 + pyqtgraph。
+依赖：pyserial + PySide6 + pyqtgraph + pyqtdarktheme。
 
 功能概览：
-- 真·HEX 收发、编码选择（ASCII/UTF-8/GBK）、完整串口参数（菜单展开）
+- 多串口：一个窗口内标签页并行监听多个串口，各串口参数/显示/过滤/记录/统计独立
+- 真·HEX 收发、编码选择、完整串口参数、端口热插拔自动检测
 - 多关键词过滤（高亮/仅显示/排除/上下分栏）
-- 发送辅助（换行/历史/定时发送/快捷按钮）、收发统计
-- 端口热插拔自动检测、深色主题、字体缩放、自动保存分片
-- 数值曲线绘图（独立窗口）、脚本/自动应答（菜单展开）
+- 数值曲线绘图（独立窗口，可选监听串口）
+- 日志：连接后自动保存（COM口+时间戳）、自动分片、精确时间戳、目录可配置
+- 发送辅助（SSCOM 式命令、页签分页、定时循环发送）
+- 三种主题（深色/护眼/白天）
 """
 
 from __future__ import annotations
@@ -55,6 +57,11 @@ _HL_INTERVAL = 0.5
 _HOTPLUG_MS = 2000
 _PLOT_WINDOW = 600
 
+_APP_NAME = "OhmyPort"
+_APP_VERSION = "1.0.0"
+_APP_AUTHOR = "zhangyaoxing"
+_APP_DATE = "2026-09-05"
+
 _THEME_CFG = {
     "black": {"theme": "dark"},
     "day": {"theme": "light"},
@@ -69,11 +76,6 @@ _THEME_CFG = {
         },
     },
 }
-
-_APP_NAME = "串口工具"
-_APP_VERSION = "1.0.0"
-_APP_AUTHOR = "zhangyaoxing"
-_APP_DATE = "2026-09-05"
 
 _NUM_RE = re.compile(r"-?\d+\.?\d*")
 
@@ -92,6 +94,12 @@ def _fmt_bytes(n: int) -> str:
 
 def _extract_numbers(text: str) -> list[float]:
     return [float(m) for m in _NUM_RE.findall(text)]
+
+
+def _make_btn(text: str, slot) -> QPushButton:
+    btn = QPushButton(text)
+    btn.clicked.connect(slot)
+    return btn
 
 
 class LogFilter:
@@ -313,7 +321,7 @@ def _fmt_val(v: float) -> str:
 
 
 class PlotWindow(QDialog):
-    """数值绘图独立窗口：黑底折线图 + 右侧提取结果分栏。"""
+    """数值绘图独立窗口：黑底折线图 + 右侧提取结果分栏 + 串口来源选择。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -321,6 +329,7 @@ class PlotWindow(QDialog):
         self.resize(900, 560)
         self._plot_rules: list[PlotRule] = []
         self._plot_last: list[float | None] = []
+        self._sessions: list = []
         self._build()
         self._apply_rules()
 
@@ -331,6 +340,9 @@ class PlotWindow(QDialog):
 
         bar = QHBoxLayout()
         bar.addWidget(QLabel("数值曲线"))
+        bar.addWidget(QLabel("串口:"))
+        self._source_combo = QComboBox()
+        bar.addWidget(self._source_combo)
         bar.addWidget(self._btn("添加规则", self._add_rule))
         bar.addWidget(self._btn("删除选中", self._del_rule))
         bar.addWidget(self._btn("清空", self.clear_plot))
@@ -378,6 +390,21 @@ class PlotWindow(QDialog):
         btn = QPushButton(text)
         btn.clicked.connect(slot)
         return btn
+
+    def set_sessions(self, sessions: list) -> None:
+        current = self._source_combo.currentData()
+        self._sessions = list(sessions)
+        self._source_combo.blockSignals(True)
+        self._source_combo.clear()
+        for s in self._sessions:
+            self._source_combo.addItem(s.title(), s)
+        if current in self._sessions:
+            self._source_combo.setCurrentIndex(self._sessions.index(current))
+        self._source_combo.blockSignals(False)
+
+    def feed_from_session(self, session, texts: list[str]) -> None:
+        if self._source_combo.currentData() is session:
+            self.feed_texts(texts)
 
     # ---- 规则 ----
     def _add_rule(self) -> None:
@@ -522,11 +549,13 @@ class CycleDialog(QDialog):
         self.list_layout.addStretch(1)
 
 
-class SerialToolWindow(QMainWindow):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("串口工具")
-        self.resize(980, 720)
+class SerialSession(QWidget):
+    """单个串口会话：独立的串口参数、显示、过滤、记录、统计。"""
+
+    def __init__(self, window, index: int):
+        super().__init__(window)
+        self.window = window
+        self.index = index
         self.serial = SerialMonitor()
         self._filter = LogFilter()
         self._buffer: collections.deque = collections.deque(maxlen=_MAX_LINES)
@@ -534,30 +563,14 @@ class SerialToolWindow(QMainWindow):
         self._paused = False
         self._hex = False
         self._frozen = False
-        self._auto_record = True
-        self._shard_mb = 5
+        self._filter_enabled = False
         self._record_file = None
         self._last_highlight = 0.0
         self._rx_bytes = 0
         self._tx_bytes = 0
-        self._rate: collections.deque = collections.deque()  # (mono, rx, tx)
+        self._rate: collections.deque = collections.deque()
         self._known_ports: set[str] = set()
-        self._theme = "day"
-        self._pages: list[str] = ["第1页"]
-        self._commands: list[dict] = []
-        self._cycle_enabled = False
-        self._cycle_interval = 1000
-        self._cycle_dialog: CycleDialog | None = None
-        self._filter_enabled = False
-        self._log_dir_override: str | None = None
-        self._cycle_idx = 0
-        self._wheel_filter = _WheelZoomFilter(self)
-        self._load_config()
         self._build()
-        self.plot_window = PlotWindow(self)
-        self._build_menu()
-        self._apply_theme_qss()
-        self.plot_window.finished.connect(lambda _r: self.plot_action.setChecked(False))
         self.serial.set_receive_callback(self._on_receive_batch)
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(_FLUSH_MS)
@@ -567,77 +580,24 @@ class SerialToolWindow(QMainWindow):
         self._hotplug_timer.setInterval(_HOTPLUG_MS)
         self._hotplug_timer.timeout.connect(self._check_hotplug)
         self._hotplug_timer.start()
-        self._timer_send = QTimer(self)
-        self._timer_send.timeout.connect(self._timer_send_tick)
         self.refresh_ports()
 
+    def title(self) -> str:
+        if self.serial.is_connected:
+            return self.port_combo.currentData() or f"串口{self.index + 1}"
+        return f"串口{self.index + 1}"
+
+    def shutdown(self) -> None:
+        self._flush_timer.stop()
+        self._hotplug_timer.stop()
+        if self._record_file is not None:
+            self._record_file.close()
+            self._record_file = None
+        self.serial.disconnect()
+
     # ---------- UI 构建 ----------
-    def _btn(self, text: str, slot) -> QPushButton:
-        btn = QPushButton(text)
-        btn.clicked.connect(slot)
-        return btn
-
-    def _build_menu(self) -> None:
-        menubar = self.menuBar()
-        view = menubar.addMenu("视图")
-
-        acts = [
-            ("串口参数", self.serial_params_panel),
-            ("发送辅助", self.send_assist_panel),
-            ("自动应答", self.auto_reply_panel),
-        ]
-        for label, panel in acts:
-            a = QAction(label, self, checkable=True)
-            a.toggled.connect(panel.setVisible)
-            view.addAction(a)
-
-        self.plot_action = QAction("数值绘图", self, checkable=True)
-        self.plot_action.toggled.connect(self._toggle_plot_window)
-        view.addAction(self.plot_action)
-
-        view.addSeparator()
-        theme_menu = view.addMenu("主题")
-        theme_group = QActionGroup(self)
-        theme_group.setExclusive(True)
-        for label, key in (("黑色", "black"), ("护眼", "eye"), ("白天", "day")):
-            a = QAction(label, self, checkable=True)
-            a.setChecked(self._theme == key)
-            a.triggered.connect(lambda _=False, k=key: self._set_theme(k))
-            theme_group.addAction(a)
-            theme_menu.addAction(a)
-
-        zoom_in = QAction("字体增大", self)
-        zoom_in.triggered.connect(lambda: self.log_text.zoomIn(1))
-        zoom_out = QAction("字体减小", self)
-        zoom_out.triggered.connect(lambda: self.log_text.zoomOut(1))
-        zoom_reset = QAction("重置字体", self)
-        zoom_reset.triggered.connect(self._reset_font)
-        view.addSeparator()
-        view.addAction(zoom_in)
-        view.addAction(zoom_out)
-        view.addAction(zoom_reset)
-
-        settings_menu = menubar.addMenu("设置")
-        log_dir_action = QAction("日志保存目录...", self)
-        log_dir_action.triggered.connect(self._choose_log_dir)
-        settings_menu.addAction(log_dir_action)
-        self.auto_record_action = QAction("连接后自动保存日志", self, checkable=True)
-        self.auto_record_action.setChecked(self._auto_record)
-        self.auto_record_action.toggled.connect(self._set_auto_record)
-        settings_menu.addAction(self.auto_record_action)
-        shard_action = QAction("日志分片大小...", self)
-        shard_action.triggered.connect(self._set_shard_size)
-        settings_menu.addAction(shard_action)
-
-        help_menu = menubar.addMenu("帮助")
-        about = QAction("关于", self)
-        about.triggered.connect(self._show_about)
-        help_menu.addAction(about)
-
     def _build(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(4)
 
@@ -647,7 +607,7 @@ class SerialToolWindow(QMainWindow):
         self.port_combo = QComboBox()
         self.port_combo.setMinimumWidth(120)
         conn.addWidget(self.port_combo)
-        conn.addWidget(self._btn("刷新", self.refresh_ports))
+        conn.addWidget(_make_btn("刷新", self.refresh_ports))
         conn.addWidget(QLabel("波特率"))
         self.baud_combo = QComboBox()
         self.baud_combo.setEditable(True)
@@ -655,7 +615,7 @@ class SerialToolWindow(QMainWindow):
         self.baud_combo.setCurrentText("115200")
         self.baud_combo.setMinimumWidth(90)
         conn.addWidget(self.baud_combo)
-        self.connect_btn = self._btn("打开串口", self.toggle_connection)
+        self.connect_btn = _make_btn("打开串口", self.toggle_connection)
         conn.addWidget(self.connect_btn)
         conn.addStretch(1)
         layout.addLayout(conn)
@@ -714,7 +674,7 @@ class SerialToolWindow(QMainWindow):
         self.hex_view_check = QCheckBox("HEX显示")
         self.hex_view_check.toggled.connect(self._on_hex_view)
         filt.addWidget(self.hex_view_check)
-        self.filter_btn = self._btn("应用", self.toggle_filter)
+        self.filter_btn = _make_btn("应用", self.toggle_filter)
         filt.addWidget(self.filter_btn)
         layout.addLayout(filt)
 
@@ -722,7 +682,7 @@ class SerialToolWindow(QMainWindow):
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumBlockCount(_MAX_LINES)
-        self.log_text.installEventFilter(self._wheel_filter)
+        self.log_text.installEventFilter(self.window._wheel_filter)
         self.log_text.setContextMenuPolicy(Qt.CustomContextMenu)
         self.log_text.customContextMenuRequested.connect(self._show_log_menu)
         layout.addWidget(self.log_text, 3)
@@ -734,48 +694,28 @@ class SerialToolWindow(QMainWindow):
         mp.setSpacing(2)
         mp_bar = QHBoxLayout()
         mp_bar.addWidget(QLabel("命中结果"))
-        mp_bar.addWidget(self._btn("清空", self._clear_matched))
+        mp_bar.addWidget(_make_btn("清空", self._clear_matched))
         mp_bar.addStretch(1)
         mp.addLayout(mp_bar)
         self.matched_text = QPlainTextEdit()
         self.matched_text.setReadOnly(True)
         self.matched_text.setMaximumBlockCount(_MAX_LINES)
-        self.matched_text.installEventFilter(self._wheel_filter)
+        self.matched_text.installEventFilter(self.window._wheel_filter)
         mp.addWidget(self.matched_text)
         self.matched_panel.setVisible(False)
         layout.addWidget(self.matched_panel, 1)
 
-        # 发送辅助（隐藏面板）
-        self.send_assist_panel = QWidget()
-        sa = QVBoxLayout(self.send_assist_panel)
-        sa.setContentsMargins(0, 0, 0, 0)
-        sa.setSpacing(3)
-        bar = QHBoxLayout()
-        bar.addWidget(self._btn("添加命令", self._add_command))
-        bar.addWidget(self._btn("添加页", lambda: self._add_page()))
-        bar.addWidget(self._btn("定时循环发送...", self._open_cycle_dialog))
-        bar.addStretch(1)
-        sa.addLayout(bar)
-        self.command_tabs = QTabWidget()
-        self.command_tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
-        self.command_tabs.tabBar().customContextMenuRequested.connect(self._show_tab_menu)
-        self.command_tabs.tabBarDoubleClicked.connect(self._rename_page)
-        sa.addWidget(self.command_tabs, 1)
-        self.send_assist_panel.setVisible(False)
-        layout.addWidget(self.send_assist_panel)
-        self._rebuild_command_tabs()
-
         # 底部操作行 + 统计
         bar = QHBoxLayout()
-        self.pause_btn = self._btn("暂停", self.toggle_pause)
+        self.pause_btn = _make_btn("暂停", self.toggle_pause)
         bar.addWidget(self.pause_btn)
-        bar.addWidget(self._btn("清空", self.clear_log))
+        bar.addWidget(_make_btn("清空", self.clear_log))
         self.fixed_check = QCheckBox("固定显示")
         self.fixed_check.setChecked(False)
         self.fixed_check.setToolTip("固定模式下不刷新显示，但后台持续接收、记录、缓冲")
         self.fixed_check.toggled.connect(self._on_fixed_toggle)
         bar.addWidget(self.fixed_check)
-        self.record_btn = self._btn("开始记录", self.toggle_record)
+        self.record_btn = _make_btn("开始记录", self.toggle_record)
         bar.addWidget(self.record_btn)
         bar.addStretch(1)
         self.stat_label = QLabel("RX: 0 B  TX: 0 B")
@@ -797,7 +737,7 @@ class SerialToolWindow(QMainWindow):
         send.addWidget(self.newline_combo)
         self.hex_send_check = QCheckBox("HEX发送")
         send.addWidget(self.hex_send_check)
-        send.addWidget(self._btn("发送", self.send_raw))
+        send.addWidget(_make_btn("发送", self.send_raw))
         layout.addLayout(send)
 
         # 自动应答（隐藏面板）
@@ -807,8 +747,8 @@ class SerialToolWindow(QMainWindow):
         ar_bar = QHBoxLayout()
         self.auto_enable = QCheckBox("启用自动应答")
         ar_bar.addWidget(self.auto_enable)
-        ar_bar.addWidget(self._btn("添加规则", self._add_auto_rule))
-        ar_bar.addWidget(self._btn("删除选中", self._del_auto_rule))
+        ar_bar.addWidget(_make_btn("添加规则", self._add_auto_rule))
+        ar_bar.addWidget(_make_btn("删除选中", self._del_auto_rule))
         ar_bar.addStretch(1)
         ar.addLayout(ar_bar)
         self.auto_table = QTableWidget(0, 2)
@@ -845,6 +785,7 @@ class SerialToolWindow(QMainWindow):
             self._sys("已关闭串口")
             if self._record_file is not None:
                 self._stop_record()
+            self.window.update_session_title(self)
         else:
             port = self.port_combo.currentData()
             if not port:
@@ -867,8 +808,9 @@ class SerialToolWindow(QMainWindow):
                 self.connect_btn.setText("关闭串口")
                 self._sys(f"已打开 {port} @ {baud}")
                 QMessageBox.information(self, "串口连接", f"串口 {port} 连接成功")
-                if self._auto_record and self._record_file is None:
+                if self.window._auto_record and self._record_file is None:
                     self._start_record()
+                self.window.update_session_title(self)
             else:
                 self._sys(f"打开 {port} 失败")
                 QMessageBox.warning(self, "串口连接", f"串口 {port} 连接失败")
@@ -893,6 +835,19 @@ class SerialToolWindow(QMainWindow):
         if self._do_send(data):
             self._add_send_history(text)
             self.send_combo.setCurrentText("")
+
+    def send_command_content(self, content: str) -> None:
+        if not content:
+            return
+        if self.hex_send_check.isChecked():
+            data = self._parse_hex(content)
+            if data is None:
+                self._sys("命令 HEX 格式无效")
+                return
+        else:
+            nl = self.newline_combo.currentData()
+            data = (content + nl).encode(self._encoding(), errors="replace")
+        self._do_send(data)
 
     def _parse_hex(self, text: str) -> bytes | None:
         t = text.replace(" ", "").replace("0x", "").replace("0X", "")
@@ -921,17 +876,475 @@ class SerialToolWindow(QMainWindow):
         while self.send_combo.count() > 50:
             self.send_combo.removeItem(0)
 
-    def _timer_send_tick(self) -> None:
-        if not self.serial.is_connected:
+    # ---------- 日志 ----------
+    def _encoding(self) -> str:
+        return self.encoding_combo.currentData()
+
+    def _sys(self, text: str) -> None:
+        self._pending.put((_now(), "sys", text))
+
+    def _dir_mark(self, d: str) -> str:
+        return {"rx": "", "tx": ">>>>>>>>>>>", "sys": "◆ "}.get(d, "")
+
+    def _payload_text(self, payload) -> str:
+        if isinstance(payload, bytes):
+            return payload.decode(self._encoding(), errors="replace")
+        return payload
+
+    def _format_line(self, ts: str, direction: str, payload) -> str:
+        if isinstance(payload, bytes):
+            if self._hex:
+                body = payload.hex(" ").upper()
+            else:
+                body = payload.decode(self._encoding(), errors="replace")
+        else:
+            body = payload
+        return f"[{ts}] {self._dir_mark(direction)}{body}"
+
+    def _flush(self) -> None:
+        items: list[tuple[str, str, object]] = []
+        while True:
+            try:
+                items.append(self._pending.get_nowait())
+            except queue.Empty:
+                break
+        if not items:
             return
-        checked = [i for i, c in enumerate(self._commands)
-                   if c.get("cycle") and c.get("content")]
+        pieces: list[str] = []
+        matched_pieces: list[str] = []
+        rx_texts: list[str] = []
+        for ts, direction, payload in items:
+            if self._paused and direction != "sys":
+                continue
+            self._buffer.append((ts, direction, payload))
+            text = self._payload_text(payload)
+            if direction == "rx":
+                self._rx_bytes += len(payload) + 1 if isinstance(payload, bytes) else 0
+            if self._record_file is not None:
+                self._record_file.write(self._format_line(ts, direction, payload) + "\n")
+            if self._filter.visible(text):
+                pieces.append(self._format_line(ts, direction, payload))
+            if self._filter.mode == "split" and self._filter.matched(text):
+                matched_pieces.append(self._format_line(ts, direction, payload))
+            if direction == "rx":
+                rx_texts.append(text)
+        if pieces and not self._frozen:
+            self.log_text.appendPlainText("\n".join(pieces))
+        if matched_pieces and not self._frozen:
+            self.matched_text.appendPlainText("\n".join(matched_pieces))
+        if rx_texts:
+            self.window.plot_window.feed_from_session(self, rx_texts)
+        if self._record_file is not None:
+            self._record_file.flush()
+            if self._record_file.tell() >= self.window._shard_mb * 1024 * 1024:
+                self._rotate_record()
+        self._update_stats()
+        if not self._frozen:
+            self._scroll()
+        self._maybe_highlight()
+        if self.auto_enable.isChecked():
+            for ts, direction, payload in items:
+                if direction == "rx":
+                    self._check_auto_reply(self._payload_text(payload))
+
+    def _scroll(self) -> None:
+        sb = self.log_text.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _rerender(self) -> None:
+        self.log_text.clear()
+        pieces: list[str] = []
+        for ts, direction, payload in self._buffer:
+            text = self._payload_text(payload)
+            if self._filter.visible(text):
+                pieces.append(self._format_line(ts, direction, payload))
+        if pieces:
+            self.log_text.appendPlainText("\n".join(pieces))
+        self._scroll()
+        self._render_matched()
+        self._apply_highlight(self.log_text)
+        self._last_highlight = time.monotonic()
+
+    def _on_hex_view(self, checked: bool) -> None:
+        self._hex = checked
+        self._rerender()
+
+    def clear_log(self) -> None:
+        self._buffer.clear()
+        self.log_text.clear()
+        self.matched_text.clear()
+        self.window.plot_window.clear_plot()
+
+    def toggle_pause(self) -> None:
+        self._paused = not self._paused
+        self.pause_btn.setText("继续" if self._paused else "暂停")
+        if not self._paused:
+            self._rerender()
+
+    def _on_fixed_toggle(self, checked: bool) -> None:
+        self._frozen = checked
+        if not checked:
+            self._rerender()
+
+    # ---------- 统计 ----------
+    def _update_stats(self) -> None:
+        now = time.monotonic()
+        self._rate.append((now, self._rx_bytes, self._tx_bytes))
+        while self._rate and now - self._rate[0][0] > 1.0:
+            self._rate.popleft()
+        if len(self._rate) >= 2:
+            t0, rx0, tx0 = self._rate[0]
+            dt = now - t0
+            rx_rate = (self._rx_bytes - rx0) / dt if dt > 0 else 0
+            tx_rate = (self._tx_bytes - tx0) / dt if dt > 0 else 0
+            self.stat_label.setText(
+                f"RX: {_fmt_bytes(self._rx_bytes)} ({_fmt_bytes(int(rx_rate))}/s)   "
+                f"TX: {_fmt_bytes(self._tx_bytes)} ({_fmt_bytes(int(tx_rate))}/s)")
+        else:
+            self.stat_label.setText(f"RX: {_fmt_bytes(self._rx_bytes)}   TX: {_fmt_bytes(self._tx_bytes)}")
+
+    # ---------- 高亮 ----------
+    def _maybe_highlight(self) -> None:
+        now = time.monotonic()
+        if now - self._last_highlight < _HL_INTERVAL:
+            return
+        self._last_highlight = now
+        self._apply_highlight(self.log_text)
+        if self._filter.mode == "split":
+            self._apply_highlight(self.matched_text)
+
+    def _apply_highlight(self, widget: QPlainTextEdit) -> None:
+        if self._hex or not self._filter.highlight_enabled() or not self._filter.keywords:
+            widget.setExtraSelections([])
+            return
+        fmt = QTextCharFormat()
+        fmt.setBackground(_HL_BG)
+        fmt.setForeground(_HL_FG)
+        flags = (QTextDocument.FindFlag.FindCaseSensitively
+                 if self._filter.case_sensitive else QTextDocument.FindFlag(0))
+        doc = widget.document()
+        selections: list = []
+        for kw in self._filter.keywords:
+            cursor = doc.find(kw, 0, flags)
+            while not cursor.isNull():
+                sel = QTextEdit.ExtraSelection()
+                sel.cursor = cursor
+                sel.format = fmt
+                selections.append(sel)
+                cursor = doc.find(kw, cursor.position(), flags)
+        widget.setExtraSelections(selections)
+
+    # ---------- 过滤 ----------
+    def toggle_filter(self) -> None:
+        if self._filter_enabled:
+            self._filter_enabled = False
+            self._filter.keywords = []
+            self.filter_btn.setText("应用")
+            self._rerender()
+            self.matched_panel.setVisible(False)
+        else:
+            self._enable_filter()
+
+    def _enable_filter(self) -> None:
+        self._filter_enabled = True
+        self.apply_filter()
+        self.filter_btn.setText("关闭")
+
+    def apply_filter(self) -> None:
+        if not self._filter_enabled:
+            return
+        self._filter.keywords = LogFilter.parse_keywords(self.keyword_edit.text())
+        self._filter.mode = self.mode_combo.currentData()
+        self._filter.case_sensitive = self.case_check.isChecked()
+        self._rerender()
+        self.matched_panel.setVisible(self._filter.mode == "split")
+
+    def _render_matched(self) -> None:
+        if self._filter.mode != "split":
+            return
+        self.matched_text.clear()
+        pieces: list[str] = []
+        for ts, direction, payload in self._buffer:
+            if self._filter.matched(self._payload_text(payload)):
+                pieces.append(self._format_line(ts, direction, payload))
+        if pieces:
+            self.matched_text.appendPlainText("\n".join(pieces))
+        self._apply_highlight(self.matched_text)
+
+    def _clear_matched(self) -> None:
+        self.matched_text.clear()
+
+    # ---------- 自动应答 ----------
+    def _add_auto_rule(self) -> None:
+        row = self.auto_table.rowCount()
+        self.auto_table.insertRow(row)
+        self.auto_table.setItem(row, 0, QTableWidgetItem(""))
+        self.auto_table.setItem(row, 1, QTableWidgetItem(""))
+
+    def _del_auto_rule(self) -> None:
+        row = self.auto_table.currentRow()
+        if row >= 0:
+            self.auto_table.removeRow(row)
+
+    def _check_auto_reply(self, text: str) -> None:
+        for row in range(self.auto_table.rowCount()):
+            trigger_item = self.auto_table.item(row, 0)
+            resp_item = self.auto_table.item(row, 1)
+            trigger = trigger_item.text().strip() if trigger_item else ""
+            response = resp_item.text().strip() if resp_item else ""
+            if trigger and response and trigger.lower() in text.lower():
+                self._send_text(response)
+
+    # ---------- 保存 ----------
+    def _log_basename(self) -> str:
+        port = self.port_combo.currentData() or ""
+        port = re.sub(r"[^0-9A-Za-z_-]", "_", port) or "serial"
+        return f"{port}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    def _show_log_menu(self, pos) -> None:
+        menu = self.log_text.createStandardContextMenu()
+        menu.addSeparator()
+        menu.addAction("保存日志", self.save_log)
+        menu.addAction("打开日志目录", self.window._open_log_dir)
+        menu.exec(self.log_text.viewport().mapToGlobal(pos))
+
+    def toggle_record(self) -> None:
+        if self._record_file is not None:
+            self._stop_record()
+        else:
+            self._start_record()
+
+    def _start_record(self) -> None:
+        if self._record_file is None:
+            self._open_record_file()
+        self.record_btn.setText("停止记录")
+
+    def _stop_record(self) -> None:
+        if self._record_file is not None:
+            self._record_file.close()
+            self._record_file = None
+        self.record_btn.setText("开始记录")
+        self._sys("已停止记录")
+
+    def _open_record_file(self) -> None:
+        path = self.window._log_dir() / f"{self._log_basename()}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._record_file = open(path, "a", encoding="utf-8")
+        self._sys(f"开始记录到: {path}")
+
+    def _rotate_record(self) -> None:
+        if self._record_file is not None:
+            self._record_file.close()
+        self._open_record_file()
+        self._sys("文件已达上限，已分片到新文件")
+
+    def save_log(self) -> None:
+        default = str(self.window._log_dir() / f"{self._log_basename()}.txt")
+        path, _ = QFileDialog.getSaveFileName(self, "保存串口日志", default, "文本文件 (*.txt)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for ts, direction, payload in self._buffer:
+                    if self._filter.visible(self._payload_text(payload)):
+                        f.write(self._format_line(ts, direction, payload) + "\n")
+        except OSError as exc:
+            QMessageBox.warning(self, "保存失败", str(exc))
+            return
+        self._sys(f"日志已保存: {path}")
+
+
+class SerialToolWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{_APP_NAME} v{_APP_VERSION}")
+        self.resize(980, 720)
+        self._sessions: list[SerialSession] = []
+        self._theme = "day"
+        self._pages: list[str] = ["第1页"]
+        self._commands: list[dict] = []
+        self._cycle_enabled = False
+        self._cycle_interval = 1000
+        self._cycle_dialog: CycleDialog | None = None
+        self._log_dir_override: str | None = None
+        self._auto_record = True
+        self._shard_mb = 5
+        self._cycle_idx = 0
+        self._wheel_filter = _WheelZoomFilter(self)
+        self._load_config()
+        self._build()
+        self.plot_window = PlotWindow(self)
+        self._build_menu()
+        self._apply_theme_qss()
+        self.plot_window.finished.connect(lambda _r: self.plot_action.setChecked(False))
+        self._timer_send = QTimer(self)
+        self._timer_send.timeout.connect(self._timer_send_tick)
+        self._add_session()
+
+    # ---------- UI ----------
+    def _build(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        top = QHBoxLayout()
+        top.addWidget(_make_btn("＋ 添加串口", self._add_session))
+        top.addStretch(1)
+        layout.addLayout(top)
+
+        self.session_tabs = QTabWidget()
+        self.session_tabs.setTabsClosable(True)
+        self.session_tabs.tabCloseRequested.connect(self._close_session)
+        self.session_tabs.currentChanged.connect(self._on_tab_changed)
+        layout.addWidget(self.session_tabs, 1)
+
+        # 发送辅助（全局，隐藏面板）
+        self.send_assist_panel = QWidget()
+        sa = QVBoxLayout(self.send_assist_panel)
+        sa.setContentsMargins(0, 0, 0, 0)
+        sa.setSpacing(3)
+        bar = QHBoxLayout()
+        bar.addWidget(_make_btn("添加命令", self._add_command))
+        bar.addWidget(_make_btn("添加页", lambda: self._add_page()))
+        bar.addWidget(_make_btn("定时循环发送...", self._open_cycle_dialog))
+        bar.addStretch(1)
+        sa.addLayout(bar)
+        self.command_tabs = QTabWidget()
+        self.command_tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.command_tabs.tabBar().customContextMenuRequested.connect(self._show_tab_menu)
+        self.command_tabs.tabBarDoubleClicked.connect(self._rename_page)
+        sa.addWidget(self.command_tabs, 1)
+        self.send_assist_panel.setVisible(False)
+        layout.addWidget(self.send_assist_panel)
+        self._rebuild_command_tabs()
+
+    def _build_menu(self) -> None:
+        menubar = self.menuBar()
+        view = menubar.addMenu("视图")
+
+        self.params_action = QAction("串口参数", self, checkable=True)
+        self.params_action.toggled.connect(self._toggle_active_params)
+        view.addAction(self.params_action)
+
+        self.send_assist_action = QAction("发送辅助", self, checkable=True)
+        self.send_assist_action.toggled.connect(self.send_assist_panel.setVisible)
+        view.addAction(self.send_assist_action)
+
+        self.auto_reply_action = QAction("自动应答", self, checkable=True)
+        self.auto_reply_action.toggled.connect(self._toggle_active_auto_reply)
+        view.addAction(self.auto_reply_action)
+
+        self.plot_action = QAction("数值绘图", self, checkable=True)
+        self.plot_action.toggled.connect(self._toggle_plot_window)
+        view.addAction(self.plot_action)
+
+        view.addSeparator()
+        theme_menu = view.addMenu("主题")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for label, key in (("黑色", "black"), ("护眼", "eye"), ("白天", "day")):
+            a = QAction(label, self, checkable=True)
+            a.setChecked(self._theme == key)
+            a.triggered.connect(lambda _=False, k=key: self._set_theme(k))
+            theme_group.addAction(a)
+            theme_menu.addAction(a)
+
+        zoom_in = QAction("字体增大", self)
+        zoom_in.triggered.connect(lambda: self._zoom_log(1))
+        zoom_out = QAction("字体减小", self)
+        zoom_out.triggered.connect(lambda: self._zoom_log(-1))
+        zoom_reset = QAction("重置字体", self)
+        zoom_reset.triggered.connect(self._reset_font)
+        view.addSeparator()
+        view.addAction(zoom_in)
+        view.addAction(zoom_out)
+        view.addAction(zoom_reset)
+
+        settings_menu = menubar.addMenu("设置")
+        log_dir_action = QAction("日志保存目录...", self)
+        log_dir_action.triggered.connect(self._choose_log_dir)
+        settings_menu.addAction(log_dir_action)
+        self.auto_record_action = QAction("连接后自动保存日志", self, checkable=True)
+        self.auto_record_action.setChecked(self._auto_record)
+        self.auto_record_action.toggled.connect(self._set_auto_record)
+        settings_menu.addAction(self.auto_record_action)
+        shard_action = QAction("日志分片大小...", self)
+        shard_action.triggered.connect(self._set_shard_size)
+        settings_menu.addAction(shard_action)
+
+        help_menu = menubar.addMenu("帮助")
+        about = QAction("关于", self)
+        about.triggered.connect(self._show_about)
+        help_menu.addAction(about)
+
+    # ---------- 会话管理 ----------
+    def active_session(self) -> SerialSession | None:
+        w = self.session_tabs.currentWidget()
+        return w if isinstance(w, SerialSession) else None
+
+    def _add_session(self) -> None:
+        s = SerialSession(self, len(self._sessions))
+        self._sessions.append(s)
+        idx = self.session_tabs.addTab(s, s.title())
+        self.session_tabs.setCurrentIndex(idx)
+        self.plot_window.set_sessions(self._sessions)
+        self._sync_menu_state()
+
+    def _close_session(self, idx: int) -> None:
+        if self.session_tabs.count() <= 1:
+            QMessageBox.information(self, "串口", "至少保留一个串口标签页")
+            return
+        s = self.session_tabs.widget(idx)
+        if not isinstance(s, SerialSession):
+            return
+        s.shutdown()
+        self.session_tabs.removeTab(idx)
+        self._sessions.remove(s)
+        s.deleteLater()
+        for i, sess in enumerate(self._sessions):
+            sess.index = i
+            self.session_tabs.setTabText(i, sess.title())
+        self.plot_window.set_sessions(self._sessions)
+        self._sync_menu_state()
+
+    def update_session_title(self, session: SerialSession) -> None:
+        if session in self._sessions:
+            idx = self._sessions.index(session)
+            self.session_tabs.setTabText(idx, session.title())
+        self.plot_window.set_sessions(self._sessions)
+
+    def _on_tab_changed(self, _idx: int) -> None:
+        self._sync_menu_state()
+
+    def _sync_menu_state(self) -> None:
+        s = self.active_session()
+        self.params_action.setChecked(bool(s and not s.serial_params_panel.isHidden()))
+        self.auto_reply_action.setChecked(bool(s and not s.auto_reply_panel.isHidden()))
+
+    def _toggle_active_params(self, checked: bool) -> None:
+        s = self.active_session()
+        if s:
+            s.serial_params_panel.setVisible(checked)
+
+    def _toggle_active_auto_reply(self, checked: bool) -> None:
+        s = self.active_session()
+        if s:
+            s.auto_reply_panel.setVisible(checked)
+
+    # ---------- 定时循环发送（全局，发给当前标签页） ----------
+    def _timer_send_tick(self) -> None:
+        s = self.active_session()
+        if s is None or not s.serial.is_connected:
+            return
+        checked = [i for i, c in enumerate(self._commands) if c.get("cycle") and c.get("content")]
         if checked:
             idx = checked[self._cycle_idx % len(checked)]
             self._cycle_idx += 1
             self._send_command(idx)
-        elif self.send_combo.currentText():
-            self.send_raw()
+        elif s.send_combo.currentText():
+            s.send_raw()
 
     def _set_cycle_enabled(self, enabled: bool) -> None:
         self._cycle_enabled = enabled
@@ -1011,7 +1424,7 @@ class SerialToolWindow(QMainWindow):
         if idx < 0 or idx >= len(self._pages):
             return
         if len(self._pages) <= 1:
-            self._sys("至少保留一个页")
+            self._active_sys("至少保留一个页")
             return
         count = sum(1 for c in self._commands if c.get("page") == idx)
         msg = f"确定删除页「{self._pages[idx]}」吗？"
@@ -1116,242 +1529,41 @@ class SerialToolWindow(QMainWindow):
     def _send_command(self, idx: int) -> None:
         content = self._commands[idx].get("content") or ""
         if not content:
-            self._sys("命令内容为空")
+            self._active_sys("命令内容为空")
             return
-        if self.hex_send_check.isChecked():
-            data = self._parse_hex(content)
-            if data is None:
-                self._sys("命令 HEX 格式无效")
-                return
-        else:
-            nl = self.newline_combo.currentData()
-            data = (content + nl).encode(self._encoding(), errors="replace")
-        self._do_send(data)
-
-    # ---------- 日志 ----------
-    def _encoding(self) -> str:
-        return self.encoding_combo.currentData()
-
-    def _sys(self, text: str) -> None:
-        self._pending.put((_now(), "sys", text))
-
-    def _dir_mark(self, d: str) -> str:
-        return {"rx": "", "tx": ">>>>>>>>>>>", "sys": "◆ "}.get(d, "")
-
-    def _payload_text(self, payload) -> str:
-        if isinstance(payload, bytes):
-            return payload.decode(self._encoding(), errors="replace")
-        return payload
-
-    def _format_line(self, ts: str, direction: str, payload) -> str:
-        if isinstance(payload, bytes):
-            if self._hex:
-                body = payload.hex(" ").upper()
-            else:
-                body = payload.decode(self._encoding(), errors="replace")
-        else:
-            body = payload
-        return f"[{ts}] {self._dir_mark(direction)}{body}"
-
-    def _flush(self) -> None:
-        items: list[tuple[str, str, object]] = []
-        while True:
-            try:
-                items.append(self._pending.get_nowait())
-            except queue.Empty:
-                break
-        if not items:
+        s = self.active_session()
+        if s is None:
             return
-        pieces: list[str] = []
-        matched_pieces: list[str] = []
-        rx_texts: list[str] = []
-        for ts, direction, payload in items:
-            if self._paused and direction != "sys":
-                continue
-            self._buffer.append((ts, direction, payload))
-            text = self._payload_text(payload)
-            if direction == "rx":
-                self._rx_bytes += len(payload) + 1 if isinstance(payload, bytes) else 0
-            if self._record_file is not None:
-                self._record_file.write(self._format_line(ts, direction, payload) + "\n")
-            if self._filter.visible(text):
-                pieces.append(self._format_line(ts, direction, payload))
-            if self._filter.mode == "split" and self._filter.matched(text):
-                matched_pieces.append(self._format_line(ts, direction, payload))
-            if direction == "rx" and self.plot_window.isVisible():
-                rx_texts.append(text)
-        if pieces and not self._frozen:
-            self.log_text.appendPlainText("\n".join(pieces))
-        if matched_pieces and not self._frozen:
-            self.matched_text.appendPlainText("\n".join(matched_pieces))
-        if rx_texts:
-            self.plot_window.feed_texts(rx_texts)
-        if self._record_file is not None:
-            self._record_file.flush()
-            if self._record_file.tell() >= self._shard_mb * 1024 * 1024:
-                self._rotate_record()
-        self._update_stats()
-        if not self._frozen:
-            self._scroll()
-        self._maybe_highlight()
-        if self.auto_enable.isChecked():
-            for ts, direction, payload in items:
-                if direction == "rx":
-                    self._check_auto_reply(self._payload_text(payload))
+        s.send_command_content(content)
 
-    def _scroll(self) -> None:
-        sb = self.log_text.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def _rerender(self) -> None:
-        self.log_text.clear()
-        pieces: list[str] = []
-        for ts, direction, payload in self._buffer:
-            text = self._payload_text(payload)
-            if self._filter.visible(text):
-                pieces.append(self._format_line(ts, direction, payload))
-        if pieces:
-            self.log_text.appendPlainText("\n".join(pieces))
-        self._scroll()
-        self._render_matched()
-        self._apply_highlight(self.log_text)
-        self._last_highlight = time.monotonic()
-
-    def _on_hex_view(self, checked: bool) -> None:
-        self._hex = checked
-        self._rerender()
-
-    def clear_log(self) -> None:
-        self._buffer.clear()
-        self.log_text.clear()
-        self.matched_text.clear()
-        self.plot_window.clear_plot()
-
-    def toggle_pause(self) -> None:
-        self._paused = not self._paused
-        self.pause_btn.setText("继续" if self._paused else "暂停")
-        if not self._paused:
-            self._rerender()
-
-    def _on_fixed_toggle(self, checked: bool) -> None:
-        self._frozen = checked
-        if not checked:
-            self._rerender()
-
-    # ---------- 统计 ----------
-    def _update_stats(self) -> None:
-        now = time.monotonic()
-        self._rate.append((now, self._rx_bytes, self._tx_bytes))
-        while self._rate and now - self._rate[0][0] > 1.0:
-            self._rate.popleft()
-        if len(self._rate) >= 2:
-            t0, rx0, tx0 = self._rate[0]
-            dt = now - t0
-            rx_rate = (self._rx_bytes - rx0) / dt if dt > 0 else 0
-            tx_rate = (self._tx_bytes - tx0) / dt if dt > 0 else 0
-            self.stat_label.setText(
-                f"RX: {_fmt_bytes(self._rx_bytes)} ({_fmt_bytes(int(rx_rate))}/s)   "
-                f"TX: {_fmt_bytes(self._tx_bytes)} ({_fmt_bytes(int(tx_rate))}/s)")
-        else:
-            self.stat_label.setText(f"RX: {_fmt_bytes(self._rx_bytes)}   TX: {_fmt_bytes(self._tx_bytes)}")
-
-    # ---------- 高亮 ----------
-    def _maybe_highlight(self) -> None:
-        now = time.monotonic()
-        if now - self._last_highlight < _HL_INTERVAL:
-            return
-        self._last_highlight = now
-        self._apply_highlight(self.log_text)
-        if self._filter.mode == "split":
-            self._apply_highlight(self.matched_text)
-
-    def _apply_highlight(self, widget: QPlainTextEdit) -> None:
-        if self._hex or not self._filter.highlight_enabled() or not self._filter.keywords:
-            widget.setExtraSelections([])
-            return
-        fmt = QTextCharFormat()
-        fmt.setBackground(_HL_BG)
-        fmt.setForeground(_HL_FG)
-        flags = (QTextDocument.FindFlag.FindCaseSensitively
-                 if self._filter.case_sensitive else QTextDocument.FindFlag(0))
-        doc = widget.document()
-        selections: list = []
-        for kw in self._filter.keywords:
-            cursor = doc.find(kw, 0, flags)
-            while not cursor.isNull():
-                sel = QTextEdit.ExtraSelection()
-                sel.cursor = cursor
-                sel.format = fmt
-                selections.append(sel)
-                cursor = doc.find(kw, cursor.position(), flags)
-        widget.setExtraSelections(selections)
-
-    # ---------- 过滤 ----------
-    def toggle_filter(self) -> None:
-        if self._filter_enabled:
-            self._filter_enabled = False
-            self._filter.keywords = []
-            self.filter_btn.setText("应用")
-            self._rerender()
-            self.matched_panel.setVisible(False)
-        else:
-            self._enable_filter()
-
-    def _enable_filter(self) -> None:
-        self._filter_enabled = True
-        self.apply_filter()
-        self.filter_btn.setText("关闭")
-
-    def apply_filter(self) -> None:
-        if not self._filter_enabled:
-            return
-        self._filter.keywords = LogFilter.parse_keywords(self.keyword_edit.text())
-        self._filter.mode = self.mode_combo.currentData()
-        self._filter.case_sensitive = self.case_check.isChecked()
-        self._rerender()
-        self.matched_panel.setVisible(self._filter.mode == "split")
-
-    def _render_matched(self) -> None:
-        if self._filter.mode != "split":
-            return
-        self.matched_text.clear()
-        pieces: list[str] = []
-        for ts, direction, payload in self._buffer:
-            if self._filter.matched(self._payload_text(payload)):
-                pieces.append(self._format_line(ts, direction, payload))
-        if pieces:
-            self.matched_text.appendPlainText("\n".join(pieces))
-        self._apply_highlight(self.matched_text)
-
-    def _clear_matched(self) -> None:
-        self.matched_text.clear()
+    # ---------- 全局反馈 ----------
+    def _active_sys(self, text: str) -> None:
+        s = self.active_session()
+        if s:
+            s._sys(text)
 
     # ---------- 绘图 ----------
     def _toggle_plot_window(self, checked: bool) -> None:
         self.plot_window.setVisible(checked)
 
-    # ---------- 自动应答 ----------
-    def _add_auto_rule(self) -> None:
-        row = self.auto_table.rowCount()
-        self.auto_table.insertRow(row)
-        self.auto_table.setItem(row, 0, QTableWidgetItem(""))
-        self.auto_table.setItem(row, 1, QTableWidgetItem(""))
+    # ---------- 字体 ----------
+    def _zoom_log(self, step: int) -> None:
+        s = self.active_session()
+        if s:
+            if step > 0:
+                s.log_text.zoomIn(step)
+            else:
+                s.log_text.zoomOut(-step)
 
-    def _del_auto_rule(self) -> None:
-        row = self.auto_table.currentRow()
-        if row >= 0:
-            self.auto_table.removeRow(row)
+    def _reset_font(self) -> None:
+        s = self.active_session()
+        if s:
+            f = s.log_text.font()
+            f.setPointSize(10)
+            s.log_text.setFont(f)
+            s.matched_text.setFont(f)
 
-    def _check_auto_reply(self, text: str) -> None:
-        for row in range(self.auto_table.rowCount()):
-            trigger_item = self.auto_table.item(row, 0)
-            resp_item = self.auto_table.item(row, 1)
-            trigger = trigger_item.text().strip() if trigger_item else ""
-            response = resp_item.text().strip() if resp_item else ""
-            if trigger and response and trigger.lower() in text.lower():
-                self._send_text(response)
-
-    # ---------- 保存 ----------
+    # ---------- 保存 / 目录 ----------
     @staticmethod
     def _base_dir() -> Path:
         if getattr(sys, "frozen", False):
@@ -1363,75 +1575,18 @@ class SerialToolWindow(QMainWindow):
             return Path(self._log_dir_override)
         return self._base_dir() / "Logs"
 
-    def _log_basename(self) -> str:
-        port = self.port_combo.currentData() or ""
-        port = re.sub(r"[^0-9A-Za-z_-]", "_", port) or "serial"
-        return f"{port}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
     def _choose_log_dir(self) -> None:
         start = self._log_dir()
         start.mkdir(parents=True, exist_ok=True)
         path = QFileDialog.getExistingDirectory(self, "选择日志保存目录", str(start))
         if path:
             self._log_dir_override = path
-            self._sys(f"日志保存目录已设为: {path}")
+            self._active_sys(f"日志保存目录已设为: {path}")
 
     def _open_log_dir(self) -> None:
         path = self._log_dir()
         path.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-
-    def _show_log_menu(self, pos) -> None:
-        menu = self.log_text.createStandardContextMenu()
-        menu.addSeparator()
-        menu.addAction("保存日志", self.save_log)
-        menu.addAction("打开日志目录", self._open_log_dir)
-        menu.exec(self.log_text.viewport().mapToGlobal(pos))
-
-    def toggle_record(self) -> None:
-        if self._record_file is not None:
-            self._stop_record()
-        else:
-            self._start_record()
-
-    def _start_record(self) -> None:
-        if self._record_file is None:
-            self._open_record_file()
-        self.record_btn.setText("停止记录")
-
-    def _stop_record(self) -> None:
-        if self._record_file is not None:
-            self._record_file.close()
-            self._record_file = None
-        self.record_btn.setText("开始记录")
-        self._sys("已停止记录")
-
-    def _open_record_file(self) -> None:
-        path = self._log_dir() / f"{self._log_basename()}.txt"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._record_file = open(path, "a", encoding="utf-8")
-        self._sys(f"开始记录到: {path}")
-
-    def _rotate_record(self) -> None:
-        if self._record_file is not None:
-            self._record_file.close()
-        self._open_record_file()
-        self._sys("文件已达上限，已分片到新文件")
-
-    def save_log(self) -> None:
-        default = str(self._log_dir() / f"{self._log_basename()}.txt")
-        path, _ = QFileDialog.getSaveFileName(self, "保存串口日志", default, "文本文件 (*.txt)")
-        if not path:
-            return
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                for ts, direction, payload in self._buffer:
-                    if self._filter.visible(self._payload_text(payload)):
-                        f.write(self._format_line(ts, direction, payload) + "\n")
-        except OSError as exc:
-            QMessageBox.warning(self, "保存失败", str(exc))
-            return
-        self._sys(f"日志已保存: {path}")
 
     # ---------- 配置 ----------
     def _config_path(self) -> Path:
@@ -1494,9 +1649,9 @@ class SerialToolWindow(QMainWindow):
         if ok:
             self._shard_mb = value
             self._save_config()
-            self._sys(f"日志分片大小已设为 {value} MB")
+            self._active_sys(f"日志分片大小已设为 {value} MB")
 
-    # ---------- 主题 / 字体 ----------
+    # ---------- 主题 ----------
     def _set_theme(self, theme: str) -> None:
         self._theme = theme
         self._apply_theme_qss()
@@ -1505,29 +1660,19 @@ class SerialToolWindow(QMainWindow):
     def _apply_theme_qss(self) -> None:
         qdarktheme.setup_theme(**_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
 
-    def _reset_font(self) -> None:
-        f = self.log_text.font()
-        f.setPointSize(10)
-        self.log_text.setFont(f)
-        self.matched_text.setFont(f)
-
     def _show_about(self) -> None:
         QMessageBox.about(
             self, "关于",
             f"<h3>{_APP_NAME} v{_APP_VERSION}</h3>"
             f"<p>作者：{_APP_AUTHOR}<br>发布日期：{_APP_DATE}</p>"
-            "<p>独立串口调试工具：数值绘图、日志自动保存、多关键词过滤、"
+            "<p>多串口并行调试工具：数值绘图、日志自动保存、多关键词过滤、"
             "自动应答、SSCOM 式命令发送。</p>",
         )
 
     def closeEvent(self, event) -> None:
-        self._flush_timer.stop()
-        self._hotplug_timer.stop()
         self._timer_send.stop()
-        if self._record_file is not None:
-            self._record_file.close()
-            self._record_file = None
-        self.serial.disconnect()
+        for s in self._sessions:
+            s.shutdown()
         super().closeEvent(event)
 
 
