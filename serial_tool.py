@@ -34,7 +34,7 @@ import pyqtgraph as pg
 import qdarktheme
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QTextCharFormat, QTextDocument
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QTextCharFormat, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
@@ -807,7 +807,6 @@ class SerialSession(QWidget):
             if self.serial.connect(port, baud, **kwargs):
                 self.connect_btn.setText("关闭串口")
                 self._sys(f"已打开 {port} @ {baud}")
-                QMessageBox.information(self, "串口连接", f"串口 {port} 连接成功")
                 if self.window._auto_record and self._record_file is None:
                     self._start_record()
                 self.window.update_session_title(self)
@@ -929,9 +928,9 @@ class SerialSession(QWidget):
                 matched_pieces.append(self._format_line(ts, direction, payload))
             if direction == "rx":
                 rx_texts.append(text)
-        if pieces and not self._frozen:
+        if pieces:
             self.log_text.appendPlainText("\n".join(pieces))
-        if matched_pieces and not self._frozen:
+        if matched_pieces:
             self.matched_text.appendPlainText("\n".join(matched_pieces))
         if rx_texts:
             self.window.plot_window.feed_from_session(self, rx_texts)
@@ -985,7 +984,7 @@ class SerialSession(QWidget):
     def _on_fixed_toggle(self, checked: bool) -> None:
         self._frozen = checked
         if not checked:
-            self._rerender()
+            self._scroll()
 
     # ---------- 统计 ----------
     def _update_stats(self) -> None:
@@ -1726,9 +1725,18 @@ class SerialToolWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _resource_path(filename: str) -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / filename
+    return Path(__file__).resolve().parent / filename
+
+
 def main() -> None:
     app = QApplication(sys.argv)
+    icon = QIcon(str(_resource_path("my-icon.ico")))
+    app.setWindowIcon(icon)
     win = SerialToolWindow()
+    win.setWindowIcon(icon)
     win.show()
     sys.exit(app.exec())
 

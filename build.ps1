@@ -42,7 +42,8 @@ Write-Host "[3/4] 开始打包..." -ForegroundColor Cyan
 $env:QT_API = "pyside6"
 python -m PyInstaller --noconfirm --clean --windowed --onefile `
     --name $AppName `
-    --icon my-icon.png `
+    --icon my-icon.ico `
+    --add-data "my-icon.ico;." `
     --collect-all qdarktheme `
     --exclude-module PyQt5 `
     --exclude-module matplotlib `
