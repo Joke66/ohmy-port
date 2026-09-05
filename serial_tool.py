@@ -29,6 +29,7 @@ import serial
 from serial.tools import list_ports
 
 import pyqtgraph as pg
+import qdarktheme
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QTextCharFormat, QTextDocument
@@ -54,44 +55,25 @@ _HL_INTERVAL = 0.5
 _HOTPLUG_MS = 2000
 _PLOT_WINDOW = 600
 
-_DARK_QSS = """
-QWidget { background-color: #1e1e1e; color: #d4d4d4; font-size: 13px; }
-QPushButton { background-color: #2d2d2d; border: 1px solid #3c3c3c; padding: 5px 10px; border-radius: 3px; }
-QPushButton:hover { background-color: #3c3c3c; }
-QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTableWidget { background-color: #252525; border: 1px solid #3c3c3c; }
-QComboBox QAbstractItemView { background-color: #252525; selection-background-color: #0e639c; }
-QPlainTextEdit { background-color: #1e1e1e; }
-QHeaderView::section { background-color: #2d2d2d; border: 1px solid #3c3c3c; }
-QMenuBar { background-color: #252525; }
-QMenu { background-color: #2d2d2d; }
-QMenu::item:selected { background-color: #0e639c; }
-"""
+_THEME_CFG = {
+    "black": {"theme": "dark"},
+    "day": {"theme": "light"},
+    "eye": {
+        "theme": "light",
+        "custom_colors": {
+            "background": "#c8e6c9",
+            "foreground": "#1f3b26",
+            "primary": "#2e7d32",
+            "input.background": "#eaf6ec",
+            "border": "#a5d6a7",
+        },
+    },
+}
 
-_EYE_QSS = """
-QWidget { background-color: #c8e6c9; color: #1f3b26; font-size: 13px; }
-QPushButton { background-color: #a5d6a7; border: 1px solid #7fb685; padding: 5px 10px; border-radius: 4px; color: #1f3b26; }
-QPushButton:hover { background-color: #96cd99; }
-QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTableWidget { background-color: #eaf6ec; border: 1px solid #a9d4ae; color: #1f3b26; }
-QComboBox QAbstractItemView { background-color: #eaf6ec; selection-background-color: #8cc794; }
-QPlainTextEdit { background-color: #eaf6ec; }
-QHeaderView::section { background-color: #a5d6a7; border: 1px solid #7fb685; color: #1f3b26; }
-QMenuBar { background-color: #b7dfbb; }
-QMenu { background-color: #eaf6ec; }
-QMenu::item:selected { background-color: #8cc794; }
-"""
-
-_DAY_QSS = """
-QWidget { background-color: #ffffff; color: #000000; font-size: 13px; }
-QPushButton { background-color: #f2f2f2; border: 1px solid #c8c8c8; padding: 5px 10px; border-radius: 4px; }
-QPushButton:hover { background-color: #e6e6e6; }
-QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTableWidget { background-color: #ffffff; border: 1px solid #c8c8c8; }
-QComboBox QAbstractItemView { background-color: #ffffff; selection-background-color: #cce4f7; }
-QPlainTextEdit { background-color: #ffffff; }
-QHeaderView::section { background-color: #f2f2f2; border: 1px solid #c8c8c8; }
-QMenuBar { background-color: #f7f7f7; }
-QMenu { background-color: #ffffff; }
-QMenu::item:selected { background-color: #cce4f7; }
-"""
+_APP_NAME = "串口工具"
+_APP_VERSION = "1.0.0"
+_APP_AUTHOR = "zhangyaoxing"
+_APP_DATE = "2026-09-05"
 
 _NUM_RE = re.compile(r"-?\d+\.?\d*")
 
@@ -671,6 +653,7 @@ class SerialToolWindow(QMainWindow):
         self.baud_combo.setEditable(True)
         self.baud_combo.addItems(_BAUDS)
         self.baud_combo.setCurrentText("115200")
+        self.baud_combo.setMinimumWidth(90)
         conn.addWidget(self.baud_combo)
         self.connect_btn = self._btn("打开串口", self.toggle_connection)
         conn.addWidget(self.connect_btn)
@@ -1153,7 +1136,7 @@ class SerialToolWindow(QMainWindow):
         self._pending.put((_now(), "sys", text))
 
     def _dir_mark(self, d: str) -> str:
-        return {"rx": "收←◆", "tx": "发→◇", "sys": "  ◆"}.get(d, "")
+        return {"rx": "", "tx": ">>>>>>>>>>>", "sys": "◆ "}.get(d, "")
 
     def _payload_text(self, payload) -> str:
         if isinstance(payload, bytes):
@@ -1168,7 +1151,7 @@ class SerialToolWindow(QMainWindow):
                 body = payload.decode(self._encoding(), errors="replace")
         else:
             body = payload
-        return f"[{ts}] {self._dir_mark(direction)} {body}"
+        return f"[{ts}] {self._dir_mark(direction)}{body}"
 
     def _flush(self) -> None:
         items: list[tuple[str, str, object]] = []
@@ -1369,10 +1352,16 @@ class SerialToolWindow(QMainWindow):
                 self._send_text(response)
 
     # ---------- 保存 ----------
+    @staticmethod
+    def _base_dir() -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent
+
     def _log_dir(self) -> Path:
         if self._log_dir_override:
             return Path(self._log_dir_override)
-        return Path(__file__).resolve().parent / "Logs"
+        return self._base_dir() / "Logs"
 
     def _log_basename(self) -> str:
         port = self.port_combo.currentData() or ""
@@ -1446,7 +1435,7 @@ class SerialToolWindow(QMainWindow):
 
     # ---------- 配置 ----------
     def _config_path(self) -> Path:
-        return Path(__file__).resolve().parent / "serial_tool_config.json"
+        return self._base_dir() / "serial_tool_config.json"
 
     def _load_config(self) -> None:
         path = self._config_path()
@@ -1514,7 +1503,7 @@ class SerialToolWindow(QMainWindow):
         self._save_config()
 
     def _apply_theme_qss(self) -> None:
-        self.setStyleSheet({"black": _DARK_QSS, "eye": _EYE_QSS, "day": _DAY_QSS}.get(self._theme, _DAY_QSS))
+        qdarktheme.setup_theme(**_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
 
     def _reset_font(self) -> None:
         f = self.log_text.font()
@@ -1523,7 +1512,13 @@ class SerialToolWindow(QMainWindow):
         self.matched_text.setFont(f)
 
     def _show_about(self) -> None:
-        QMessageBox.about(self, "关于", "<h3>串口工具</h3><p>独立串口调试工具。</p>")
+        QMessageBox.about(
+            self, "关于",
+            f"<h3>{_APP_NAME} v{_APP_VERSION}</h3>"
+            f"<p>作者：{_APP_AUTHOR}<br>发布日期：{_APP_DATE}</p>"
+            "<p>独立串口调试工具：数值绘图、日志自动保存、多关键词过滤、"
+            "自动应答、SSCOM 式命令发送。</p>",
+        )
 
     def closeEvent(self, event) -> None:
         self._flush_timer.stop()
