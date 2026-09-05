@@ -4,32 +4,45 @@
     python serial_tool.py
 
 也可由主工具通过「打开串口工具」按钮拉起。自包含：仅依赖 pyserial + PySide6。
+
+性能要点（实时性优化）：
+- 接收线程用 read() 批量读 + 按 \\n 切分，一次性回调一批行；
+- 主线程用 QTimer 定时 flush（默认 80ms），把一批行合成纯文本一次性 appendPlainText；
+- 日志视图用 QPlainTextEdit（比 QTextEdit+HTML 快一个数量级）；
+- 关键词高亮用 QPlainTextEdit 的 ExtraSelection（原生 C++ 查找，不逐行拼 HTML）；
+- 历史行数封顶（环形 buffer + setMaximumBlockCount），内存恒定。
 """
 
 from __future__ import annotations
 
+import collections
 import datetime
-import html
-import re
+import queue
 import sys
 import threading
+import time
 from pathlib import Path
 
 import serial
 from serial.tools import list_ports
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QColor, QTextCharFormat, QTextDocument
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 _BAUDS = ["115200", "57600", "38400", "19200", "9600", "4800", "2400"]
-_RX_COLOR = "#3aa757"   # 收
-_TX_COLOR = "#4a90d9"   # 发
-_SYS_COLOR = "#888888"  # 系统
-_HL_STYLE = "background-color:#fff59d;color:#000000;"  # 关键词高亮
+_HL_BG = QColor("#fff59d")  # 关键词高亮背景
+_HL_FG = QColor("#000000")
+
+# 性能参数
+_MAX_LINES = 50_000      # 历史行数上限（环形缓冲）
+_FLUSH_MS = 80           # UI 批量刷新间隔
+_READ_CHUNK = 4096       # 串口批量读块大小
+_HL_INTERVAL = 0.5       # 高亮重算节流（秒）
 
 
 def _now() -> str:
@@ -90,7 +103,7 @@ class LogFilter:
 
 
 class SerialMonitor:
-    """自包含的最小串口封装：连接 / 接收线程 / 发送。"""
+    """自包含的最小串口封装：连接 / 批量接收线程 / 发送。"""
 
     def __init__(self):
         self._serial = None
@@ -141,34 +154,43 @@ class SerialMonitor:
             return False
 
     def _receive_loop(self) -> None:
+        buf = b""
         while not self._stop.is_set():
             try:
                 if self._serial is not None and self._serial.is_open:
-                    line = self._serial.readline()
-                    if line and self._callback is not None:
-                        self._callback(line.decode("ascii", errors="replace").rstrip("\r\n"))
+                    chunk = self._serial.read(_READ_CHUNK)
+                    if not chunk:
+                        continue
+                    buf += chunk
+                    *lines, buf = buf.split(b"\n")
+                    if lines and self._callback is not None:
+                        decoded = [l.decode("ascii", errors="replace").rstrip("\r") for l in lines]
+                        self._callback(decoded)  # 批量回调
             except Exception:
                 if self._stop.is_set():
                     break
 
 
 class SerialToolWindow(QMainWindow):
-    line_signal = Signal(str, str)  # (文本, 方向: rx/tx/sys)
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("串口工具")
         self.resize(900, 680)
         self.serial = SerialMonitor()
         self._filter = LogFilter()
-        self._buffer: list[tuple[str, str, str]] = []  # (时间, 方向, 文本)
+        self._buffer: collections.deque = collections.deque(maxlen=_MAX_LINES)
+        self._pending: "queue.Queue[tuple[str, str, str]]" = queue.Queue()
         self._paused = False
         self._hex = False
         self._auto_scroll = True
         self._record_file = None
+        self._last_highlight = 0.0
         self._build()
-        self.line_signal.connect(self._on_line, Qt.QueuedConnection)
-        self.serial.set_receive_callback(self._on_receive)
+        self.serial.set_receive_callback(self._on_receive_batch)
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(_FLUSH_MS)
+        self._flush_timer.timeout.connect(self._flush)
+        self._flush_timer.start()
         self.refresh_ports()
 
     def _btn(self, text: str, slot) -> QPushButton:
@@ -216,8 +238,9 @@ class SerialToolWindow(QMainWindow):
         layout.addLayout(filt)
 
         # 上：日志内容
-        self.log_text = QTextEdit()
+        self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.setMaximumBlockCount(_MAX_LINES)
         layout.addWidget(self.log_text, 3)
 
         # 下：命中结果面板（默认隐藏，分栏模式时显示）
@@ -232,8 +255,9 @@ class SerialToolWindow(QMainWindow):
         mp_bar.addWidget(clear_btn)
         mp_bar.addStretch(1)
         mp.addLayout(mp_bar)
-        self.matched_text = QTextEdit()
+        self.matched_text = QPlainTextEdit()
         self.matched_text.setReadOnly(True)
+        self.matched_text.setMaximumBlockCount(_MAX_LINES)
         mp.addWidget(self.matched_text)
         self.matched_panel.setVisible(False)
         layout.addWidget(self.matched_panel, 1)
@@ -287,8 +311,9 @@ class SerialToolWindow(QMainWindow):
             else:
                 self._sys(f"打开 {port} 失败")
 
-    def _on_receive(self, line: str) -> None:
-        self.line_signal.emit(line, "rx")
+    def _on_receive_batch(self, lines: list[str]) -> None:
+        for line in lines:
+            self._pending.put((_now(), "rx", line))
 
     def send_raw(self) -> None:
         data = self.send_edit.text()
@@ -298,59 +323,52 @@ class SerialToolWindow(QMainWindow):
             self._sys("串口未打开，无法发送")
             return
         if self.serial.send(data):
-            self.line_signal.emit(data, "tx")
+            self._pending.put((_now(), "tx", data))
             self.send_edit.clear()
 
     # ---------- 日志 ----------
     def _sys(self, text: str) -> None:
-        self.line_signal.emit(text, "sys")
+        self._pending.put((_now(), "sys", text))
 
     def _dir_mark(self, d: str) -> str:
         return {"rx": "收←◆", "tx": "发→◇", "sys": "  ◆"}.get(d, "")
 
-    def _on_line(self, text: str, direction: str) -> None:
-        if self._paused and direction != "sys":
-            return
-        ts = _now()
-        self._buffer.append((ts, direction, text))
-        if self._record_file is not None:
-            self._record_file.write(f"[{ts}] {self._dir_mark(direction)} {text}\n")
-            self._record_file.flush()
-        if self._filter.visible(text):
-            self._append_to(self.log_text, self._render_line(ts, direction, text))
-        if self._filter.mode == "split" and self._filter.matched(text):
-            self._append_to(self.matched_text, self._render_line(ts, direction, text))
-        self._scroll()
-
-    def _render_line(self, ts: str, direction: str, text: str) -> str:
-        color = {"rx": _RX_COLOR, "tx": _TX_COLOR, "sys": _SYS_COLOR}.get(direction, _SYS_COLOR)
+    def _format_line(self, ts: str, direction: str, text: str) -> str:
         if self._hex:
             body = " ".join(f"{b:02X}" for b in text.encode("ascii", errors="replace"))
         else:
-            body = html.escape(text)
-            if self._filter.highlight_enabled():
-                body = self._highlight(body, text)
-        return (f'<span style="color:{color};">[{ts}] {self._dir_mark(direction)} '
-                f'<span style="white-space:pre-wrap;">{body}</span></span><br>')
+            body = text
+        return f"[{ts}] {self._dir_mark(direction)} {body}"
 
-    def _highlight(self, body: str, raw: str) -> str:
-        for kw in self._filter.matched(raw):
-            esc = html.escape(kw)
-            if self._filter.case_sensitive:
-                body = body.replace(esc, f'<span style="{_HL_STYLE}">{esc}</span>')
-            else:
-                body = re.sub(
-                    re.escape(esc),
-                    lambda m: f'<span style="{_HL_STYLE}">{m.group(0)}</span>',
-                    body, flags=re.IGNORECASE,
-                )
-        return body
-
-    def _append_to(self, widget: QTextEdit, piece: str) -> None:
-        cursor = widget.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.insertHtml(piece)
-        widget.setTextCursor(cursor)
+    def _flush(self) -> None:
+        items: list[tuple[str, str, str]] = []
+        while True:
+            try:
+                items.append(self._pending.get_nowait())
+            except queue.Empty:
+                break
+        if not items:
+            return
+        pieces: list[str] = []
+        matched_pieces: list[str] = []
+        for ts, direction, text in items:
+            if self._paused and direction != "sys":
+                continue
+            self._buffer.append((ts, direction, text))
+            if self._record_file is not None:
+                self._record_file.write(f"[{ts}] {self._dir_mark(direction)} {text}\n")
+            if self._filter.visible(text):
+                pieces.append(self._format_line(ts, direction, text))
+            if self._filter.mode == "split" and self._filter.matched(text):
+                matched_pieces.append(self._format_line(ts, direction, text))
+        if pieces:
+            self.log_text.appendPlainText("\n".join(pieces))
+        if matched_pieces:
+            self.matched_text.appendPlainText("\n".join(matched_pieces))
+        if self._record_file is not None:
+            self._record_file.flush()
+        self._scroll()
+        self._maybe_highlight()
 
     def _scroll(self) -> None:
         if self._auto_scroll:
@@ -359,11 +377,16 @@ class SerialToolWindow(QMainWindow):
 
     def _rerender(self) -> None:
         self.log_text.clear()
+        pieces: list[str] = []
         for ts, direction, text in self._buffer:
             if self._filter.visible(text):
-                self._append_to(self.log_text, self._render_line(ts, direction, text))
+                pieces.append(self._format_line(ts, direction, text))
+        if pieces:
+            self.log_text.appendPlainText("\n".join(pieces))
         self._scroll()
         self._render_matched()
+        self._apply_highlight(self.log_text)
+        self._last_highlight = time.monotonic()
 
     def clear_log(self) -> None:
         self._buffer.clear()
@@ -375,6 +398,37 @@ class SerialToolWindow(QMainWindow):
         self.pause_btn.setText("继续" if self._paused else "暂停")
         if not self._paused:
             self._rerender()
+
+    # ---------- 高亮 ----------
+    def _maybe_highlight(self) -> None:
+        now = time.monotonic()
+        if now - self._last_highlight < _HL_INTERVAL:
+            return
+        self._last_highlight = now
+        self._apply_highlight(self.log_text)
+        if self._filter.mode == "split":
+            self._apply_highlight(self.matched_text)
+
+    def _apply_highlight(self, widget: QPlainTextEdit) -> None:
+        if self._hex or not self._filter.highlight_enabled() or not self._filter.keywords:
+            widget.setExtraSelections([])
+            return
+        fmt = QTextCharFormat()
+        fmt.setBackground(_HL_BG)
+        fmt.setForeground(_HL_FG)
+        flags = (QTextDocument.FindFlag.FindCaseSensitively
+                 if self._filter.case_sensitive else QTextDocument.FindFlag(0))
+        doc = widget.document()
+        selections: list = []
+        for kw in self._filter.keywords:
+            cursor = doc.find(kw, 0, flags)
+            while not cursor.isNull():
+                sel = QTextEdit.ExtraSelection()
+                sel.cursor = cursor
+                sel.format = fmt
+                selections.append(sel)
+                cursor = doc.find(kw, cursor.position(), flags)
+        widget.setExtraSelections(selections)
 
     # ---------- 过滤 ----------
     def apply_filter(self) -> None:
@@ -388,9 +442,13 @@ class SerialToolWindow(QMainWindow):
         if self._filter.mode != "split":
             return
         self.matched_text.clear()
+        pieces: list[str] = []
         for ts, direction, text in self._buffer:
             if self._filter.matched(text):
-                self._append_to(self.matched_text, self._render_line(ts, direction, text))
+                pieces.append(self._format_line(ts, direction, text))
+        if pieces:
+            self.matched_text.appendPlainText("\n".join(pieces))
+        self._apply_highlight(self.matched_text)
 
     def _clear_matched(self) -> None:
         self.matched_text.clear()
@@ -428,6 +486,7 @@ class SerialToolWindow(QMainWindow):
         self._sys(f"日志已保存: {path}")
 
     def closeEvent(self, event) -> None:
+        self._flush_timer.stop()
         if self._record_file is not None:
             self._record_file.close()
             self._record_file = None
