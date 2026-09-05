@@ -12,3 +12,6 @@ serial_tool_config.json
 build/
 dist/
 *.spec
+
+# 发布产物
+release/

@@ -811,6 +811,7 @@ class SerialSession(QWidget):
                 if self.window._auto_record and self._record_file is None:
                     self._start_record()
                 self.window.update_session_title(self)
+                self.window._save_config()
             else:
                 self._sys(f"打开 {port} 失败")
                 QMessageBox.warning(self, "串口连接", f"串口 {port} 连接失败")
@@ -1058,6 +1059,7 @@ class SerialSession(QWidget):
         self._filter.case_sensitive = self.case_check.isChecked()
         self._rerender()
         self.matched_panel.setVisible(self._filter.mode == "split")
+        self.window._save_config()
 
     def _render_matched(self) -> None:
         if self._filter.mode != "split":
@@ -1160,7 +1162,8 @@ class SerialToolWindow(QMainWindow):
         self.setWindowTitle(f"{_APP_NAME} v{_APP_VERSION}")
         self.resize(980, 720)
         self._sessions: list[SerialSession] = []
-        self._theme = "day"
+        self._theme = "black"
+        self._remembered: dict = {}
         self._pages: list[str] = ["第1页"]
         self._commands: list[dict] = []
         self._cycle_enabled = False
@@ -1180,6 +1183,8 @@ class SerialToolWindow(QMainWindow):
         self._timer_send = QTimer(self)
         self._timer_send.timeout.connect(self._timer_send_tick)
         self._add_session()
+        if self._sessions:
+            self._apply_remembered_state(self._sessions[0])
 
     # ---------- UI ----------
     def _build(self) -> None:
@@ -1283,6 +1288,28 @@ class SerialToolWindow(QMainWindow):
     def active_session(self) -> SerialSession | None:
         w = self.session_tabs.currentWidget()
         return w if isinstance(w, SerialSession) else None
+
+    def _apply_remembered_state(self, s: SerialSession) -> None:
+        r = self._remembered or {}
+        port = r.get("port")
+        if port:
+            idx = s.port_combo.findData(port)
+            if idx >= 0:
+                s.port_combo.setCurrentIndex(idx)
+        if r.get("filter_keywords"):
+            s.keyword_edit.setText(r["filter_keywords"])
+        mode = r.get("filter_mode")
+        if mode:
+            idx = s.mode_combo.findData(mode)
+            if idx >= 0:
+                s.mode_combo.setCurrentIndex(idx)
+        s.case_check.setChecked(bool(r.get("filter_case")))
+        fs = r.get("font_size")
+        if isinstance(fs, int) and fs > 0:
+            f = s.log_text.font()
+            f.setPointSize(fs)
+            s.log_text.setFont(f)
+            s.matched_text.setFont(f)
 
     def _add_session(self) -> None:
         s = SerialSession(self, len(self._sessions))
@@ -1554,6 +1581,7 @@ class SerialToolWindow(QMainWindow):
                 s.log_text.zoomIn(step)
             else:
                 s.log_text.zoomOut(-step)
+            self._save_config()
 
     def _reset_font(self) -> None:
         s = self.active_session()
@@ -1562,6 +1590,7 @@ class SerialToolWindow(QMainWindow):
             f.setPointSize(10)
             s.log_text.setFont(f)
             s.matched_text.setFont(f)
+            self._save_config()
 
     # ---------- 保存 / 目录 ----------
     @staticmethod
@@ -1606,6 +1635,15 @@ class SerialToolWindow(QMainWindow):
             self._auto_record = data["auto_record"]
         if isinstance(data.get("shard_mb"), int):
             self._shard_mb = max(1, data["shard_mb"])
+        if isinstance(data.get("log_dir"), str) and data["log_dir"]:
+            self._log_dir_override = data["log_dir"]
+        self._remembered = {
+            "port": data.get("port"),
+            "filter_keywords": data.get("filter_keywords", ""),
+            "filter_mode": data.get("filter_mode", "highlight"),
+            "filter_case": bool(data.get("filter_case")),
+            "font_size": data.get("font_size"),
+        }
         pages = data.get("pages")
         if isinstance(pages, list) and pages:
             self._pages = [str(p) for p in pages]
@@ -1632,7 +1670,18 @@ class SerialToolWindow(QMainWindow):
             "commands": self._commands,
             "auto_record": self._auto_record,
             "shard_mb": self._shard_mb,
+            "log_dir": self._log_dir_override,
         }
+        s = self._sessions[0] if self._sessions else None
+        if s is not None:
+            fs = s.log_text.font().pointSize()
+            data.update({
+                "port": s.port_combo.currentData(),
+                "filter_keywords": s.keyword_edit.text(),
+                "filter_mode": s.mode_combo.currentData(),
+                "filter_case": s.case_check.isChecked(),
+                "font_size": fs if fs > 0 else 10,
+            })
         try:
             self._config_path().write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1670,6 +1719,7 @@ class SerialToolWindow(QMainWindow):
         )
 
     def closeEvent(self, event) -> None:
+        self._save_config()
         self._timer_send.stop()
         for s in self._sessions:
             s.shutdown()
