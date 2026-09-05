@@ -52,7 +52,6 @@ _FLUSH_MS = 80
 _READ_CHUNK = 4096
 _HL_INTERVAL = 0.5
 _HOTPLUG_MS = 2000
-_RECORD_MAX_BYTES = 5 * 1024 * 1024  # 单文件 5MB 自动分片
 _PLOT_WINDOW = 600
 
 _DARK_QSS = """
@@ -69,16 +68,29 @@ QMenu::item:selected { background-color: #0e639c; }
 """
 
 _EYE_QSS = """
-QWidget { background-color: #c7edcc; color: #003300; font-size: 13px; }
-QPushButton { background-color: #b8e0bb; border: 1px solid #8fbf93; padding: 5px 10px; border-radius: 3px; color: #003300; }
-QPushButton:hover { background-color: #a4d8a8; }
-QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTableWidget { background-color: #dcf3de; border: 1px solid #8fbf93; color: #003300; }
-QComboBox QAbstractItemView { background-color: #dcf3de; selection-background-color: #7fb883; }
-QPlainTextEdit { background-color: #dcf3de; }
-QHeaderView::section { background-color: #b8e0bb; border: 1px solid #8fbf93; color: #003300; }
-QMenuBar { background-color: #b8e0bb; }
-QMenu { background-color: #dcf3de; }
-QMenu::item:selected { background-color: #7fb883; }
+QWidget { background-color: #c8e6c9; color: #1f3b26; font-size: 13px; }
+QPushButton { background-color: #a5d6a7; border: 1px solid #7fb685; padding: 5px 10px; border-radius: 4px; color: #1f3b26; }
+QPushButton:hover { background-color: #96cd99; }
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTableWidget { background-color: #eaf6ec; border: 1px solid #a9d4ae; color: #1f3b26; }
+QComboBox QAbstractItemView { background-color: #eaf6ec; selection-background-color: #8cc794; }
+QPlainTextEdit { background-color: #eaf6ec; }
+QHeaderView::section { background-color: #a5d6a7; border: 1px solid #7fb685; color: #1f3b26; }
+QMenuBar { background-color: #b7dfbb; }
+QMenu { background-color: #eaf6ec; }
+QMenu::item:selected { background-color: #8cc794; }
+"""
+
+_DAY_QSS = """
+QWidget { background-color: #ffffff; color: #000000; font-size: 13px; }
+QPushButton { background-color: #f2f2f2; border: 1px solid #c8c8c8; padding: 5px 10px; border-radius: 4px; }
+QPushButton:hover { background-color: #e6e6e6; }
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTableWidget { background-color: #ffffff; border: 1px solid #c8c8c8; }
+QComboBox QAbstractItemView { background-color: #ffffff; selection-background-color: #cce4f7; }
+QPlainTextEdit { background-color: #ffffff; }
+QHeaderView::section { background-color: #f2f2f2; border: 1px solid #c8c8c8; }
+QMenuBar { background-color: #f7f7f7; }
+QMenu { background-color: #ffffff; }
+QMenu::item:selected { background-color: #cce4f7; }
 """
 
 _NUM_RE = re.compile(r"-?\d+\.?\d*")
@@ -539,7 +551,9 @@ class SerialToolWindow(QMainWindow):
         self._pending: "queue.Queue[tuple[str, str, object]]" = queue.Queue()
         self._paused = False
         self._hex = False
-        self._auto_scroll = True
+        self._frozen = False
+        self._auto_record = True
+        self._shard_mb = 5
         self._record_file = None
         self._last_highlight = 0.0
         self._rx_bytes = 0
@@ -547,6 +561,7 @@ class SerialToolWindow(QMainWindow):
         self._rate: collections.deque = collections.deque()  # (mono, rx, tx)
         self._known_ports: set[str] = set()
         self._theme = "day"
+        self._pages: list[str] = ["第1页"]
         self._commands: list[dict] = []
         self._cycle_enabled = False
         self._cycle_interval = 1000
@@ -624,6 +639,13 @@ class SerialToolWindow(QMainWindow):
         log_dir_action = QAction("日志保存目录...", self)
         log_dir_action.triggered.connect(self._choose_log_dir)
         settings_menu.addAction(log_dir_action)
+        self.auto_record_action = QAction("连接后自动保存日志", self, checkable=True)
+        self.auto_record_action.setChecked(self._auto_record)
+        self.auto_record_action.toggled.connect(self._set_auto_record)
+        settings_menu.addAction(self.auto_record_action)
+        shard_action = QAction("日志分片大小...", self)
+        shard_action.triggered.connect(self._set_shard_size)
+        settings_menu.addAction(shard_action)
 
         help_menu = menubar.addMenu("帮助")
         about = QAction("关于", self)
@@ -747,10 +769,14 @@ class SerialToolWindow(QMainWindow):
         sa.setSpacing(3)
         bar = QHBoxLayout()
         bar.addWidget(self._btn("添加命令", self._add_command))
+        bar.addWidget(self._btn("添加页", lambda: self._add_page()))
         bar.addWidget(self._btn("定时循环发送...", self._open_cycle_dialog))
         bar.addStretch(1)
         sa.addLayout(bar)
         self.command_tabs = QTabWidget()
+        self.command_tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.command_tabs.tabBar().customContextMenuRequested.connect(self._show_tab_menu)
+        self.command_tabs.tabBarDoubleClicked.connect(self._rename_page)
         sa.addWidget(self.command_tabs, 1)
         self.send_assist_panel.setVisible(False)
         layout.addWidget(self.send_assist_panel)
@@ -761,10 +787,11 @@ class SerialToolWindow(QMainWindow):
         self.pause_btn = self._btn("暂停", self.toggle_pause)
         bar.addWidget(self.pause_btn)
         bar.addWidget(self._btn("清空", self.clear_log))
-        self.scroll_check = QCheckBox("自动滚动")
-        self.scroll_check.setChecked(True)
-        self.scroll_check.toggled.connect(lambda c: setattr(self, "_auto_scroll", c))
-        bar.addWidget(self.scroll_check)
+        self.fixed_check = QCheckBox("固定显示")
+        self.fixed_check.setChecked(False)
+        self.fixed_check.setToolTip("固定模式下不刷新显示，但后台持续接收、记录、缓冲")
+        self.fixed_check.toggled.connect(self._on_fixed_toggle)
+        bar.addWidget(self.fixed_check)
         self.record_btn = self._btn("开始记录", self.toggle_record)
         bar.addWidget(self.record_btn)
         bar.addStretch(1)
@@ -833,6 +860,8 @@ class SerialToolWindow(QMainWindow):
             self.serial.disconnect()
             self.connect_btn.setText("打开串口")
             self._sys("已关闭串口")
+            if self._record_file is not None:
+                self._stop_record()
         else:
             port = self.port_combo.currentData()
             if not port:
@@ -855,6 +884,8 @@ class SerialToolWindow(QMainWindow):
                 self.connect_btn.setText("关闭串口")
                 self._sys(f"已打开 {port} @ {baud}")
                 QMessageBox.information(self, "串口连接", f"串口 {port} 连接成功")
+                if self._auto_record and self._record_file is None:
+                    self._start_record()
             else:
                 self._sys(f"打开 {port} 失败")
                 QMessageBox.warning(self, "串口连接", f"串口 {port} 连接失败")
@@ -947,34 +978,79 @@ class SerialToolWindow(QMainWindow):
     # ---- 命令按钮 ----
     def _rebuild_command_tabs(self) -> None:
         self.command_tabs.clear()
-        per_page = 8
-        total = len(self._commands)
-        page_count = max(1, (total + per_page - 1) // per_page)
-        for pi in range(page_count):
+        for p, pname in enumerate(self._pages):
             w = QWidget()
             grid = QGridLayout(w)
             grid.setContentsMargins(4, 4, 4, 4)
-            for k in range(per_page):
-                idx = pi * per_page + k
-                if idx >= total:
-                    break
-                cmd = self._commands[idx]
+            grid.setHorizontalSpacing(6)
+            grid.setVerticalSpacing(6)
+            k = 0
+            for idx, cmd in enumerate(self._commands):
+                if cmd.get("page") != p:
+                    continue
                 btn = CommandButton(
                     cmd.get("name") or f"命令{idx + 1}",
                     lambda _=False, i=idx: self._send_command(i),
                     lambda _=False, i=idx: self._edit_command(i),
                     lambda _=False, i=idx: self._delete_command(i),
                 )
-                btn.setToolTip(cmd.get("content") or "")
+                btn.setFixedSize(120, 34)
+                btn.setToolTip((cmd.get("name") or "") + "\n" + (cmd.get("content") or ""))
                 r, c = divmod(k, 4)
-                grid.addWidget(btn, r, c)
-            self.command_tabs.addTab(w, f"第{pi + 1}页")
+                grid.addWidget(btn, r, c, Qt.AlignLeft | Qt.AlignTop)
+                k += 1
+            self.command_tabs.addTab(w, pname)
 
     def _commands_changed(self) -> None:
         self._rebuild_command_tabs()
         if self._cycle_dialog is not None:
             self._cycle_dialog._refresh()
         self._save_config()
+
+    def _add_page(self, name: str | None = None) -> int:
+        if name is None:
+            name = f"第{len(self._pages) + 1}页"
+        self._pages.append(name)
+        self._commands_changed()
+        return len(self._pages) - 1
+
+    def _rename_page(self, idx: int | None = None) -> None:
+        if idx is None:
+            idx = self.command_tabs.currentIndex()
+        if idx < 0 or idx >= len(self._pages):
+            return
+        text, ok = QInputDialog.getText(self, "重命名页", "页名称：", text=self._pages[idx])
+        if ok and text.strip():
+            self._pages[idx] = text.strip()
+            self._commands_changed()
+
+    def _delete_page(self, idx: int) -> None:
+        if idx < 0 or idx >= len(self._pages):
+            return
+        if len(self._pages) <= 1:
+            self._sys("至少保留一个页")
+            return
+        count = sum(1 for c in self._commands if c.get("page") == idx)
+        msg = f"确定删除页「{self._pages[idx]}」吗？"
+        if count:
+            msg += f"\n该页有 {count} 条命令，将一并删除。"
+        if QMessageBox.question(self, "删除页", msg) != QMessageBox.Yes:
+            return
+        del self._pages[idx]
+        self._commands = [c for c in self._commands if c.get("page") != idx]
+        for c in self._commands:
+            if c.get("page", 0) > idx:
+                c["page"] -= 1
+        self._commands_changed()
+
+    def _show_tab_menu(self, pos) -> None:
+        idx = self.command_tabs.tabBar().tabAt(pos)
+        menu = QMenu(self)
+        menu.addAction("新增页", lambda: self._add_page())
+        if idx >= 0:
+            menu.addAction("重命名页", lambda: self._rename_page(idx))
+            menu.addAction("删除该页", lambda: self._delete_page(idx))
+        menu.exec(self.command_tabs.tabBar().mapToGlobal(pos))
 
     def _add_command(self) -> None:
         dlg = QDialog(self)
@@ -983,8 +1059,21 @@ class SerialToolWindow(QMainWindow):
         name_edit = QLineEdit()
         content_edit = QPlainTextEdit()
         content_edit.setFixedHeight(80)
+        page_combo = QComboBox()
+        first_free = -1
+        for i, pname in enumerate(self._pages):
+            cnt = sum(1 for c in self._commands if c.get("page") == i)
+            page_combo.addItem(f"{pname}（{cnt}/8）", i)
+            if cnt < 8 and first_free < 0:
+                first_free = i
+        page_combo.addItem("（新建页）", -1)
+        if first_free >= 0:
+            page_combo.setCurrentIndex(first_free)
+        else:
+            page_combo.setCurrentIndex(page_combo.count() - 1)
         form.addRow("命令名称", name_edit)
         form.addRow("命令内容", content_edit)
+        form.addRow("所属页", page_combo)
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
@@ -995,10 +1084,20 @@ class SerialToolWindow(QMainWindow):
         content = content_edit.toPlainText()
         if not name and not content:
             return
+        page = page_combo.currentData()
+        if page == -1:
+            page = len(self._pages)
+            self._pages.append(f"第{page + 1}页")
+        else:
+            cnt = sum(1 for c in self._commands if c.get("page") == page)
+            if cnt >= 8:
+                QMessageBox.warning(self, "添加命令", "该页已满（每页最多 8 个），请选择其它页或新建页")
+                return
         self._commands.append({
             "name": name or f"命令{len(self._commands) + 1}",
             "content": content,
             "cycle": False,
+            "page": page,
         })
         self._commands_changed()
 
@@ -1098,18 +1197,19 @@ class SerialToolWindow(QMainWindow):
                 matched_pieces.append(self._format_line(ts, direction, payload))
             if direction == "rx" and self.plot_window.isVisible():
                 rx_texts.append(text)
-        if pieces:
+        if pieces and not self._frozen:
             self.log_text.appendPlainText("\n".join(pieces))
-        if matched_pieces:
+        if matched_pieces and not self._frozen:
             self.matched_text.appendPlainText("\n".join(matched_pieces))
         if rx_texts:
             self.plot_window.feed_texts(rx_texts)
         if self._record_file is not None:
             self._record_file.flush()
-            if self._record_file.tell() >= _RECORD_MAX_BYTES:
+            if self._record_file.tell() >= self._shard_mb * 1024 * 1024:
                 self._rotate_record()
         self._update_stats()
-        self._scroll()
+        if not self._frozen:
+            self._scroll()
         self._maybe_highlight()
         if self.auto_enable.isChecked():
             for ts, direction, payload in items:
@@ -1117,9 +1217,8 @@ class SerialToolWindow(QMainWindow):
                     self._check_auto_reply(self._payload_text(payload))
 
     def _scroll(self) -> None:
-        if self._auto_scroll:
-            sb = self.log_text.verticalScrollBar()
-            sb.setValue(sb.maximum())
+        sb = self.log_text.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def _rerender(self) -> None:
         self.log_text.clear()
@@ -1149,6 +1248,11 @@ class SerialToolWindow(QMainWindow):
         self._paused = not self._paused
         self.pause_btn.setText("继续" if self._paused else "暂停")
         if not self._paused:
+            self._rerender()
+
+    def _on_fixed_toggle(self, checked: bool) -> None:
+        self._frozen = checked
+        if not checked:
             self._rerender()
 
     # ---------- 统计 ----------
@@ -1297,13 +1401,21 @@ class SerialToolWindow(QMainWindow):
 
     def toggle_record(self) -> None:
         if self._record_file is not None:
+            self._stop_record()
+        else:
+            self._start_record()
+
+    def _start_record(self) -> None:
+        if self._record_file is None:
+            self._open_record_file()
+        self.record_btn.setText("停止记录")
+
+    def _stop_record(self) -> None:
+        if self._record_file is not None:
             self._record_file.close()
             self._record_file = None
-            self.record_btn.setText("开始记录")
-            self._sys("已停止记录")
-        else:
-            self._open_record_file()
-            self.record_btn.setText("停止记录")
+        self.record_btn.setText("开始记录")
+        self._sys("已停止记录")
 
     def _open_record_file(self) -> None:
         path = self._log_dir() / f"{self._log_basename()}.txt"
@@ -1346,25 +1458,54 @@ class SerialToolWindow(QMainWindow):
             return
         if isinstance(data.get("theme"), str) and data["theme"] in ("black", "eye", "day"):
             self._theme = data["theme"]
+        if isinstance(data.get("auto_record"), bool):
+            self._auto_record = data["auto_record"]
+        if isinstance(data.get("shard_mb"), int):
+            self._shard_mb = max(1, data["shard_mb"])
+        pages = data.get("pages")
+        if isinstance(pages, list) and pages:
+            self._pages = [str(p) for p in pages]
         cmds = data.get("commands")
         if isinstance(cmds, list):
             loaded = []
             for c in cmds:
                 if isinstance(c, dict) and (c.get("name") or c.get("content")):
+                    page = c.get("page")
+                    if not isinstance(page, int) or page < 0 or page >= len(self._pages):
+                        page = 0
                     loaded.append({
                         "name": str(c.get("name") or ""),
                         "content": str(c.get("content") or ""),
                         "cycle": bool(c.get("cycle")),
+                        "page": page,
                     })
             self._commands = loaded
 
     def _save_config(self) -> None:
-        data = {"theme": self._theme, "commands": self._commands}
+        data = {
+            "theme": self._theme,
+            "pages": self._pages,
+            "commands": self._commands,
+            "auto_record": self._auto_record,
+            "shard_mb": self._shard_mb,
+        }
         try:
             self._config_path().write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:
             pass
+
+    def _set_auto_record(self, enabled: bool) -> None:
+        self._auto_record = enabled
+        self._save_config()
+
+    def _set_shard_size(self) -> None:
+        value, ok = QInputDialog.getInt(self, "日志分片大小", "每个日志文件最大大小（MB）：",
+                                        self._shard_mb, 1, 1024)
+        if ok:
+            self._shard_mb = value
+            self._save_config()
+            self._sys(f"日志分片大小已设为 {value} MB")
 
     # ---------- 主题 / 字体 ----------
     def _set_theme(self, theme: str) -> None:
@@ -1373,7 +1514,7 @@ class SerialToolWindow(QMainWindow):
         self._save_config()
 
     def _apply_theme_qss(self) -> None:
-        self.setStyleSheet({"black": _DARK_QSS, "eye": _EYE_QSS}.get(self._theme, ""))
+        self.setStyleSheet({"black": _DARK_QSS, "eye": _EYE_QSS, "day": _DAY_QSS}.get(self._theme, _DAY_QSS))
 
     def _reset_font(self) -> None:
         f = self.log_text.font()
