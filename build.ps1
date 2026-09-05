@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
 $AppName = "OhmyPort"
-$Version = "1.0.0"   # 与 serial_tool.py 中 _APP_VERSION 保持一致
+$Version = "1.0.1"   # 与 serial_tool.py 中 _APP_VERSION 保持一致
 
 # [1/4] 检查 PyInstaller
 Write-Host "[1/4] 检查 PyInstaller..." -ForegroundColor Cyan

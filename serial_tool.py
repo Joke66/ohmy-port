@@ -60,7 +60,7 @@ _HOTPLUG_MS = 2000
 _PLOT_WINDOW = 600
 
 _APP_NAME = "OhmyPort"
-_APP_VERSION = "1.0.0"
+_APP_VERSION = "1.0.1"
 _APP_AUTHOR = "ShineZhang"
 _APP_DATE = "2026-09-05"
 _APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
@@ -1068,6 +1068,11 @@ class SerialSession(QWidget):
     def _hide_find_bar(self) -> None:
         self.find_bar.setVisible(False)
         self.find_input.clear()
+        self._search_text = ""
+        self._search_matches = []
+        self._search_current = -1
+        self._update_search_count()
+        self._apply_highlight(self.log_text)
 
     def _on_find_dir_changed(self) -> None:
         self._search_reverse = bool(self.find_dir_combo.currentData())
