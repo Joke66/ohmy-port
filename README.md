@@ -140,6 +140,6 @@ python benchmark.py
 
 ## 版本信息
 
-- 版本：1.8.1
+- 版本：1.8.2
 - 作者：ShineZhang
 - 日期：2026-09-07

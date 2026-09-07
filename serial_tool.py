@@ -2593,10 +2593,8 @@ class SerialToolWindow(QMainWindow):
         self._active_sys(f"配置已导入: {path}")
 
     # ---------- 主题 ----------
-    def _resolved_theme(self) -> str:
-        """auto → 按系统深浅解析为 black/day；否则原样。"""
-        if self._theme != "auto":
-            return self._theme
+    def _live_resolved_theme(self) -> str:
+        """实时解析系统深浅（仅主题切换/轮询时调用，避免热路径每行都查 darkdetect）。"""
         if darkdetect is not None:
             try:
                 return "black" if darkdetect.isDark() else "day"
@@ -2604,11 +2602,20 @@ class SerialToolWindow(QMainWindow):
                 pass
         return "day"
 
+    def _resolved_theme(self) -> str:
+        """返回当前实际主题（auto 已解析）；热路径友好，使用缓存值。"""
+        if self._theme != "auto":
+            return self._theme
+        if self._last_auto_theme not in ("black", "day"):
+            self._last_auto_theme = self._live_resolved_theme()
+        return self._last_auto_theme
+
     def _set_theme(self, theme: str) -> None:
         self._theme = theme
+        if theme == "auto":
+            self._last_auto_theme = self._live_resolved_theme()
         self._apply_theme_qss()
         self._refresh_muted_labels()
-        self._last_auto_theme = self._resolved_theme()
         self._save_config()
 
     def _apply_theme_qss(self) -> None:
@@ -2626,7 +2633,8 @@ class SerialToolWindow(QMainWindow):
 
     def _start_auto_theme_watch(self) -> None:
         """auto 模式轮询系统深浅色：变化时重设实际主题（保存仍为 auto）。"""
-        self._last_auto_theme = self._resolved_theme()
+        if self._theme == "auto":
+            self._last_auto_theme = self._live_resolved_theme()
         if darkdetect is None or self._auto_theme_timer is not None:
             return
         timer = QTimer(self)
@@ -2638,7 +2646,7 @@ class SerialToolWindow(QMainWindow):
     def _poll_auto_theme(self) -> None:
         if self._theme != "auto":
             return
-        cur = self._resolved_theme()
+        cur = self._live_resolved_theme()
         if cur != self._last_auto_theme:
             self._last_auto_theme = cur
             self._apply_theme_qss()
