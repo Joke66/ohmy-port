@@ -16,6 +16,7 @@ A standalone serial debugging tool built with Python + PySide6, supporting multi
 - **Log display**: gray timestamps, cyan TX, gray system lines, theme-adaptive highlights, switchable monospace font, wrap toggle
 - **High-throughput rendering**: batched insertion, inline keyword highlighting, and format caching keep it smooth at high baud rates (see Performance)
 - **Send assist**: SSCOM-style commands (name + content), paged tabs (8 per page), timed cyclic send, right-click edit/delete; pages and commands are included in config export/import
+- **Collapsible panels**: port connection config, keyword filter, keyword search, message send, send assist, serial params, auto reply, and protocol parsing can all be shown/hidden via the View menu or toolbar icons; the connection config auto-collapses after connecting and can be re-shown by right-clicking a serial tab
 - **Auto reply**: keyword-triggered replies
 - **Tools**: ASCII ↔ HEX bidirectional conversion
 - **Background skin**: full-window background image with adjustable blur
@@ -140,6 +141,6 @@ python benchmark.py
 
 ## Version
 
-- Version: 1.7.0
+- Version: 1.8.0
 - Author: ShineZhang
 - Date: 2026-09-07

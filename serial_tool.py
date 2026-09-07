@@ -294,6 +294,9 @@ _FONT_OPTIONS = [
     ("JetBrains Mono", "JetBrains Mono"),
 ]
 
+# 日志默认字号（用户可再放大/缩小/在配置中记住）
+_DEFAULT_FONT_SIZE = 11
+
 # 高数据量渲染优化：按颜色缓存 QTextCharFormat，避免每段重复创建 QColor/格式对象
 _char_format_cache: dict[str, QTextCharFormat] = {}
 _default_char_format = QTextCharFormat()
@@ -561,8 +564,10 @@ class SerialSession(QWidget):
         layout.setContentsMargins(*_LAYOUT_MARGIN)
         layout.setSpacing(_LAYOUT_SPACING)
 
-        # 连接行
-        conn = QHBoxLayout()
+        # 端口连接配置（可折叠面板；「打开/关闭串口」按钮移至日志操作行常驻）
+        self.conn_panel = QWidget()
+        conn = QHBoxLayout(self.conn_panel)
+        conn.setContentsMargins(0, 0, 0, 0)
         conn.addWidget(QLabel("端口"))
         self.port_combo = QComboBox()
         self.port_combo.setMinimumWidth(120)
@@ -577,12 +582,8 @@ class SerialSession(QWidget):
         self.baud_combo.setCurrentText("115200")
         self.baud_combo.setMinimumWidth(90)
         conn.addWidget(self.baud_combo)
-        self.connect_btn = _make_btn("打开串口", self.toggle_connection)
-        self.connect_btn.setToolTip("打开 / 关闭当前串口")
-        _set_role(self.connect_btn, "primary")
-        conn.addWidget(self.connect_btn)
         conn.addStretch(1)
-        layout.addLayout(conn)
+        layout.addWidget(self.conn_panel)
 
         # 完整串口参数（隐藏面板）
         self.serial_params_panel = QWidget()
@@ -620,8 +621,10 @@ class SerialSession(QWidget):
         self.serial_params_panel.setVisible(False)
         layout.addWidget(self.serial_params_panel)
 
-        # 过滤行
-        filt = QHBoxLayout()
+        # 关键词过滤（可折叠面板）
+        self.filter_panel = QWidget()
+        filt = QHBoxLayout(self.filter_panel)
+        filt.setContentsMargins(0, 0, 0, 0)
         filt.addWidget(QLabel("关键词"))
         self.keyword_edit = QLineEdit()
         self.keyword_edit.setPlaceholderText("多个关键词用逗号/空格分隔，如 Err,Timeout,0x50")
@@ -648,7 +651,7 @@ class SerialSession(QWidget):
         filt.addWidget(self.hex_view_check)
         self.filter_btn = _make_btn("应用", self.toggle_filter)
         filt.addWidget(self.filter_btn)
-        layout.addLayout(filt)
+        layout.addWidget(self.filter_panel)
 
         # 查找栏（Ctrl+F 显示，Esc 关闭）
         self.find_bar = QWidget()
@@ -679,6 +682,7 @@ class SerialSession(QWidget):
         self.log_text = BgPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumBlockCount(_MAX_LINES)
+        self.log_text.setFont(self.window._make_log_font(_DEFAULT_FONT_SIZE))
         self.log_text.installEventFilter(self.window._wheel_filter)
         self.log_text.setContextMenuPolicy(Qt.CustomContextMenu)
         self.log_text.customContextMenuRequested.connect(self._show_log_menu)
@@ -704,6 +708,7 @@ class SerialSession(QWidget):
         self.matched_text = BgPlainTextEdit()
         self.matched_text.setReadOnly(True)
         self.matched_text.setMaximumBlockCount(_MAX_LINES)
+        self.matched_text.setFont(self.window._make_log_font(_DEFAULT_FONT_SIZE))
         self.matched_text.installEventFilter(self.window._wheel_filter)
         mp.addWidget(self.matched_text)
         self.matched_panel.setVisible(False)
@@ -711,6 +716,10 @@ class SerialSession(QWidget):
 
         # 日志操作行（RX/TX 统计已上移至主窗口状态栏）
         bar = QHBoxLayout()
+        self.connect_btn = _make_btn("打开串口", self.toggle_connection)
+        self.connect_btn.setToolTip("打开 / 关闭当前串口")
+        _set_role(self.connect_btn, "primary")
+        bar.addWidget(self.connect_btn)
         self.pause_btn = _make_btn("暂停", self.toggle_pause)
         self.pause_btn.setToolTip("暂停刷新显示（后台仍持续接收、记录、缓冲）")
         bar.addWidget(self.pause_btn)
@@ -729,8 +738,10 @@ class SerialSession(QWidget):
         bar.addStretch(1)
         layout.addLayout(bar)
 
-        # 发送行
-        send = QHBoxLayout()
+        # 消息发送（可折叠面板）
+        self.send_panel = QWidget()
+        send = QHBoxLayout(self.send_panel)
+        send.setContentsMargins(0, 0, 0, 0)
         self.send_combo = QComboBox()
         self.send_combo.setEditable(True)
         self.send_combo.setInsertPolicy(QComboBox.NoInsert)
@@ -747,7 +758,7 @@ class SerialSession(QWidget):
         self.send_btn.setToolTip("发送当前输入内容")
         _set_role(self.send_btn, "primary")
         send.addWidget(self.send_btn)
-        layout.addLayout(send)
+        layout.addWidget(self.send_panel)
 
         # 自动应答（隐藏面板）
         self.auto_reply_panel = QWidget()
@@ -808,6 +819,11 @@ class SerialSession(QWidget):
             if idx >= 0:
                 self.port_combo.setCurrentIndex(idx)
 
+    def _set_conn_visible(self, visible: bool) -> None:
+        """显示/隐藏端口连接配置面板（动画），并同步视图菜单勾选状态。"""
+        _start_fold(self.conn_panel, visible)
+        self.window._set_action_checked(self.window.conn_action, visible)
+
     def _check_hotplug(self) -> None:
         current = {d for d, _ in self.serial.list_ports()}
         if self.serial.is_connected:
@@ -821,6 +837,7 @@ class SerialSession(QWidget):
                 self._sys(f"串口 {port} 已断开")
                 if self._logmgr.is_open:
                     self._stop_record()
+                self._set_conn_visible(True)
                 self.window.update_session_title(self)
             return
         if current != self._known_ports:
@@ -835,6 +852,7 @@ class SerialSession(QWidget):
             self._sys("已关闭串口")
             if self._logmgr.is_open:
                 self._stop_record()
+            self._set_conn_visible(True)
             self.window.update_session_title(self)
         else:
             port = self.port_combo.currentData()
@@ -860,6 +878,7 @@ class SerialSession(QWidget):
                 self._sys(f"已打开 {port} @ {baud}")
                 if self.window._auto_record and not self._logmgr.is_open:
                     self._start_record()
+                self._set_conn_visible(False)  # 连接成功后自动收起端口连接配置
                 self.window.update_session_title(self)
                 self.window._save_config()
             else:
@@ -1185,19 +1204,26 @@ class SerialSession(QWidget):
         QToolTip.showText(pos, text, self.log_text)
 
     # ---------- 查找 ----------
+    def _set_search_visible(self, visible: bool) -> None:
+        """显示/隐藏查找栏（动画），并同步视图菜单勾选状态。"""
+        _start_fold(self.find_bar, visible)
+        self.window._set_action_checked(self.window.search_action, visible)
+        if visible:
+            self.find_input.setFocus()
+            self.find_input.selectAll()
+        else:
+            self.find_input.clear()
+            self._search_text = ""
+            self._search_matches = []
+            self._search_current = -1
+            self._update_search_count()
+            self._apply_highlight(self.log_text)
+
     def _show_find_bar(self) -> None:
-        self.find_bar.setVisible(True)
-        self.find_input.setFocus()
-        self.find_input.selectAll()
+        self._set_search_visible(True)
 
     def _hide_find_bar(self) -> None:
-        self.find_bar.setVisible(False)
-        self.find_input.clear()
-        self._search_text = ""
-        self._search_matches = []
-        self._search_current = -1
-        self._update_search_count()
-        self._apply_highlight(self.log_text)
+        self._set_search_visible(False)
 
     def _on_find_dir_changed(self) -> None:
         self._search_reverse = bool(self.find_dir_combo.currentData())
@@ -1511,7 +1537,7 @@ class SerialToolWindow(QMainWindow):
         self.setWindowTitle(f"{_APP_NAME} v{_APP_VERSION}")
         self.resize(980, 720)
         self._sessions: list[SerialSession] = []
-        self._theme = "black"
+        self._theme = "auto"
         self._remembered_sessions: list[dict] = []
         self._pages: list[str] = ["第1页"]
         self._commands: list[dict] = []
@@ -1569,6 +1595,9 @@ class SerialToolWindow(QMainWindow):
         self.session_tabs.setTabsClosable(True)
         self.session_tabs.tabCloseRequested.connect(self._close_session)
         self.session_tabs.currentChanged.connect(self._on_tab_changed)
+        # 右键标签页标签 → 重新显示连接配置等
+        self.session_tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.session_tabs.tabBar().customContextMenuRequested.connect(self._show_session_tab_menu)
         # 「＋ 新建串口」并入标签栏右上角，替代独立整行按钮
         add_tab_btn = QToolButton(self.session_tabs)
         add_tab_btn.setText("＋")
@@ -1657,11 +1686,35 @@ class SerialToolWindow(QMainWindow):
         # ---------- 视图 ----------
         view = menubar.addMenu("视图")
 
+        self.conn_action = QAction("端口连接配置", self, checkable=True)
+        self.conn_action.toggled.connect(self._toggle_active_conn)
+        view.addAction(self.conn_action)
+        _ico(self.conn_action, "port")
+        self._toolbar.addAction(self.conn_action)
+
         self.params_action = QAction("串口参数", self, checkable=True)
         self.params_action.toggled.connect(self._toggle_active_params)
         view.addAction(self.params_action)
         _ico(self.params_action, "sliders")
         self._toolbar.addAction(self.params_action)
+
+        self.filter_action = QAction("关键词过滤", self, checkable=True)
+        self.filter_action.toggled.connect(self._toggle_active_filter)
+        view.addAction(self.filter_action)
+        _ico(self.filter_action, "filter")
+        self._toolbar.addAction(self.filter_action)
+
+        self.search_action = QAction("关键词搜索", self, checkable=True)
+        self.search_action.toggled.connect(self._toggle_active_search)
+        view.addAction(self.search_action)
+        _ico(self.search_action, "search")
+        self._toolbar.addAction(self.search_action)
+
+        self.send_action = QAction("消息发送", self, checkable=True)
+        self.send_action.toggled.connect(self._toggle_active_send)
+        view.addAction(self.send_action)
+        _ico(self.send_action, "message")
+        self._toolbar.addAction(self.send_action)
 
         self.send_assist_action = QAction("发送辅助", self, checkable=True)
         self.send_assist_action.toggled.connect(self._toggle_send_assist)
@@ -1698,7 +1751,7 @@ class SerialToolWindow(QMainWindow):
         ascii_hex_action = QAction("ASCII/HEX 转换...", self)
         ascii_hex_action.triggered.connect(self._open_ascii_hex_dialog)
         view.addAction(ascii_hex_action)
-        _ico(ascii_hex_action, "search")
+        _ico(ascii_hex_action, "convert")
         self._toolbar.addAction(ascii_hex_action)
 
         # ---------- 设置 ----------
@@ -1893,11 +1946,41 @@ class SerialToolWindow(QMainWindow):
         """视图菜单「发送辅助」：动画展开 / 收起全局面板。"""
         _start_fold(self.send_assist_panel, checked)
 
+    def _set_action_checked(self, action, checked: bool) -> None:
+        """设置动作勾选状态但不触发其 toggled（避免重复折叠动画 / 级联）。"""
+        action.blockSignals(True)
+        action.setChecked(checked)
+        action.blockSignals(False)
+
     def _sync_menu_state(self) -> None:
         s = self.active_session()
-        self.params_action.setChecked(bool(s and not s.serial_params_panel.isHidden()))
-        self.auto_reply_action.setChecked(bool(s and not s.auto_reply_panel.isHidden()))
-        self.protocol_action.setChecked(bool(s and not s.protocol_panel.isHidden()))
+        self._set_action_checked(self.conn_action, bool(s and not s.conn_panel.isHidden()))
+        self._set_action_checked(self.params_action, bool(s and not s.serial_params_panel.isHidden()))
+        self._set_action_checked(self.filter_action, bool(s and not s.filter_panel.isHidden()))
+        self._set_action_checked(self.search_action, bool(s and not s.find_bar.isHidden()))
+        self._set_action_checked(self.send_action, bool(s and not s.send_panel.isHidden()))
+        self._set_action_checked(self.auto_reply_action, bool(s and not s.auto_reply_panel.isHidden()))
+        self._set_action_checked(self.protocol_action, bool(s and not s.protocol_panel.isHidden()))
+
+    def _toggle_active_conn(self, checked: bool) -> None:
+        s = self.active_session()
+        if s:
+            s._set_conn_visible(checked)
+
+    def _toggle_active_filter(self, checked: bool) -> None:
+        s = self.active_session()
+        if s:
+            _start_fold(s.filter_panel, checked)
+
+    def _toggle_active_search(self, checked: bool) -> None:
+        s = self.active_session()
+        if s:
+            s._set_search_visible(checked)
+
+    def _toggle_active_send(self, checked: bool) -> None:
+        s = self.active_session()
+        if s:
+            _start_fold(s.send_panel, checked)
 
     def _toggle_active_params(self, checked: bool) -> None:
         s = self.active_session()
@@ -1913,6 +1996,22 @@ class SerialToolWindow(QMainWindow):
         s = self.active_session()
         if s:
             _start_fold(s.protocol_panel, checked)
+
+    def _show_session_tab_menu(self, pos) -> None:
+        """右键串口标签页：可重新显示该会话的连接配置等。"""
+        idx = self.session_tabs.tabBar().tabAt(pos)
+        menu = QMenu(self)
+        show_conn = menu.addAction("显示连接配置")
+        close_tab = menu.addAction("关闭该串口会话")
+        chosen = menu.exec(self.session_tabs.tabBar().mapToGlobal(pos))
+        if chosen is show_conn:
+            if 0 <= idx < len(self._sessions):
+                self._sessions[idx]._set_conn_visible(True)
+                self.session_tabs.setCurrentIndex(idx)
+        elif chosen is close_tab:
+            if idx >= 0:
+                self._close_session(idx)
+        menu.deleteLater()
 
     # ---------- 定时循环发送（全局，发给当前标签页） ----------
     def _timer_send_tick(self) -> None:
@@ -2141,7 +2240,7 @@ class SerialToolWindow(QMainWindow):
     def _reset_font(self) -> None:
         s = self.active_session()
         if s:
-            f = self._make_log_font(10)
+            f = self._make_log_font(_DEFAULT_FONT_SIZE)
             s.log_text.setFont(f)
             s.matched_text.setFont(f)
             self._save_config()
@@ -2160,7 +2259,7 @@ class SerialToolWindow(QMainWindow):
     def _apply_font_to_session(self, s) -> None:
         fs = s.log_text.font().pointSize()
         if fs <= 0:
-            fs = 10
+            fs = _DEFAULT_FONT_SIZE
         f = self._make_log_font(fs)
         s.log_text.setFont(f)
         s.matched_text.setFont(f)
@@ -2287,7 +2386,7 @@ class SerialToolWindow(QMainWindow):
                 "filter_mode": s.mode_combo.currentData(),
                 "filter_case": s.case_check.isChecked(),
                 "filter_enabled": s._filter_enabled,
-                "font_size": fs if fs > 0 else 10,
+                "font_size": fs if fs > 0 else _DEFAULT_FONT_SIZE,
             })
         return {
             "theme": self._theme,
@@ -2619,7 +2718,8 @@ class SerialToolWindow(QMainWindow):
 
     def _set_session_transparent(self, s, flag: bool) -> None:
         s.setAttribute(Qt.WA_TranslucentBackground, flag)
-        for panel in (s.serial_params_panel, s.find_bar, s.matched_panel, s.auto_reply_panel, s.protocol_panel):
+        for panel in (s.conn_panel, s.serial_params_panel, s.filter_panel, s.find_bar,
+                      s.matched_panel, s.send_panel, s.auto_reply_panel, s.protocol_panel):
             panel.setAttribute(Qt.WA_TranslucentBackground, flag)
         s.log_text.set_transparent(flag)
         s.matched_text.set_transparent(flag)
