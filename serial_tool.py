@@ -32,7 +32,8 @@ from pathlib import Path
 import qdarktheme
 from PIL import Image, ImageFilter
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation,
+                           Qt, QTimer, QUrl, Signal)
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QFont,
                            QFontDatabase, QIcon, QKeySequence, QPainter, QPalette,
                            QPixmap, QShortcut, QTextCharFormat, QTextCursor, QTextDocument)
@@ -95,6 +96,11 @@ _UI_QSS = """
 QPushButton {
     padding: 3px 14px;
     border-radius: 6px;
+}
+CommandButton {
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-weight: 600;
 }
 QToolButton {
     padding: 3px 8px;
@@ -205,6 +211,49 @@ def _set_role(btn: QPushButton, role: str) -> None:
     st.unpolish(btn)
     st.polish(btn)
     btn.update()
+
+
+# 主窗口 / 会话页统一边距与间距（略增呼吸感，但保持工具类密度）
+_LAYOUT_MARGIN = (8, 6, 8, 6)
+_LAYOUT_SPACING = 5
+_MAX_H = 16777215  # Qt 布局允许的最大高度（对齐 QWIDGETSIZE_MAX）
+
+
+def _start_fold(panel: QWidget, expand: bool) -> None:
+    """以高度动画展开(true)/收起(false)菜单型面板；旧动画自动接管，避免竞态。"""
+    prev = getattr(panel, "_fold_anim", None)
+    anim = QPropertyAnimation(panel, b"maximumHeight", panel)
+    panel._fold_anim = anim  # 先替换引用，使旧动画的 finished 回调失效
+    if prev is not None:
+        try:
+            prev.stop()
+        except Exception:
+            pass
+    if expand:
+        panel.setMaximumHeight(0)
+        panel.setVisible(True)
+        panel.updateGeometry()
+        anim.setDuration(150)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.setStartValue(0)
+        anim.setEndValue(max(1, panel.sizeHint().height()))
+    else:
+        anim.setDuration(140)
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim.setStartValue(max(1, panel.height()))
+        anim.setEndValue(0)
+
+    def _done():
+        if getattr(panel, "_fold_anim", None) is anim:
+            if expand:
+                panel.setMaximumHeight(_MAX_H)
+            else:
+                panel.setVisible(False)
+                panel.setMaximumHeight(_MAX_H)
+            panel._fold_anim = None
+
+    anim.finished.connect(_done)
+    anim.start()
 
 # 日志等宽字体选项
 _FONT_OPTIONS = [
@@ -478,8 +527,8 @@ class SerialSession(QWidget):
     # ---------- UI 构建 ----------
     def _build(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(*_LAYOUT_MARGIN)
+        layout.setSpacing(_LAYOUT_SPACING)
 
         # 连接行
         conn = QHBoxLayout()
@@ -1479,8 +1528,8 @@ class SerialToolWindow(QMainWindow):
         central.setObjectName("centralWidget")
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(*_LAYOUT_MARGIN)
+        layout.setSpacing(_LAYOUT_SPACING)
 
         self.session_tabs = QTabWidget()
         self.session_tabs.setTabsClosable(True)
@@ -1558,7 +1607,7 @@ class SerialToolWindow(QMainWindow):
         view.addAction(self.params_action)
 
         self.send_assist_action = QAction("发送辅助", self, checkable=True)
-        self.send_assist_action.toggled.connect(self.send_assist_panel.setVisible)
+        self.send_assist_action.toggled.connect(self._toggle_send_assist)
         view.addAction(self.send_assist_action)
 
         self.auto_reply_action = QAction("自动应答", self, checkable=True)
@@ -1759,6 +1808,10 @@ class SerialToolWindow(QMainWindow):
         if self._status_label.text() != text:
             self._status_label.setText(text)
 
+    def _toggle_send_assist(self, checked: bool) -> None:
+        """视图菜单「发送辅助」：动画展开 / 收起全局面板。"""
+        _start_fold(self.send_assist_panel, checked)
+
     def _sync_menu_state(self) -> None:
         s = self.active_session()
         self.params_action.setChecked(bool(s and not s.serial_params_panel.isHidden()))
@@ -1768,17 +1821,17 @@ class SerialToolWindow(QMainWindow):
     def _toggle_active_params(self, checked: bool) -> None:
         s = self.active_session()
         if s:
-            s.serial_params_panel.setVisible(checked)
+            _start_fold(s.serial_params_panel, checked)
 
     def _toggle_active_auto_reply(self, checked: bool) -> None:
         s = self.active_session()
         if s:
-            s.auto_reply_panel.setVisible(checked)
+            _start_fold(s.auto_reply_panel, checked)
 
     def _toggle_active_protocol(self, checked: bool) -> None:
         s = self.active_session()
         if s:
-            s.protocol_panel.setVisible(checked)
+            _start_fold(s.protocol_panel, checked)
 
     # ---------- 定时循环发送（全局，发给当前标签页） ----------
     def _timer_send_tick(self) -> None:
