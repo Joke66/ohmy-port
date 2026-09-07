@@ -55,6 +55,7 @@ from common import (
 from serial_worker import SerialMonitor
 from plot_widget import PlotRule, PlotWindow, _fmt_val
 from log_manager import LogManager
+from frame_parser import FrameParser
 
 _HL_BG = QColor("#fff59d")
 _HL_FG = QColor("#000000")
@@ -307,6 +308,14 @@ class SerialSession(QWidget):
         for label, v in (("无", "none"), ("RTS/CTS", "rtscts"), ("DTR/DSR", "dsrdtr"), ("XON/XOFF", "xonxoff")):
             self.flow_combo.addItem(label, v)
         sp.addWidget(self.flow_combo)
+        self.dtr_check = QCheckBox("DTR")
+        self.dtr_check.setChecked(True)
+        self.dtr_check.toggled.connect(self.serial.set_dtr)
+        sp.addWidget(self.dtr_check)
+        self.rts_check = QCheckBox("RTS")
+        self.rts_check.setChecked(True)
+        self.rts_check.toggled.connect(self.serial.set_rts)
+        sp.addWidget(self.rts_check)
         sp.addStretch(1)
         self.serial_params_panel.setVisible(False)
         layout.addWidget(self.serial_params_panel)
@@ -452,6 +461,35 @@ class SerialSession(QWidget):
         self.auto_reply_panel.setVisible(False)
         layout.addWidget(self.auto_reply_panel)
 
+        # 协议解析（隐藏面板）
+        self.protocol_panel = QWidget()
+        pf = QHBoxLayout(self.protocol_panel)
+        pf.setContentsMargins(0, 4, 0, 0)
+        self.protocol_enable = QCheckBox("启用协议解析")
+        pf.addWidget(self.protocol_enable)
+        pf.addWidget(QLabel("帧头(hex)"))
+        self.protocol_header = QLineEdit()
+        self.protocol_header.setPlaceholderText("如 AA 55")
+        pf.addWidget(self.protocol_header)
+        pf.addWidget(QLabel("帧尾(hex)"))
+        self.protocol_tail = QLineEdit()
+        self.protocol_tail.setPlaceholderText("可空，如 0D 0A")
+        pf.addWidget(self.protocol_tail)
+        pf.addWidget(QLabel("长度字节"))
+        self.protocol_len_size = QComboBox()
+        for label, v in (("无", 0), ("1", 1), ("2", 2), ("4", 4)):
+            self.protocol_len_size.addItem(label, v)
+        pf.addWidget(self.protocol_len_size)
+        pf.addWidget(QLabel("校验"))
+        self.protocol_checksum = QComboBox()
+        for label, key in (("无", "none"), ("SUM8", "sum8"), ("XOR8", "xor8"), ("CRC16-Modbus", "crc16_modbus")):
+            self.protocol_checksum.addItem(label, key)
+        pf.addWidget(self.protocol_checksum)
+        pf.addWidget(_make_btn("应用", self._apply_protocol))
+        pf.addStretch(1)
+        self.protocol_panel.setVisible(False)
+        layout.addWidget(self.protocol_panel)
+
     # ---------- 串口 ----------
     def refresh_ports(self) -> None:
         current = self.port_combo.currentData()
@@ -524,9 +562,11 @@ class SerialSession(QWidget):
                     "常见原因：端口不存在 / 被其它软件占用 / 无访问权限。",
                 )
 
-    def _on_receive_batch(self, lines: list[bytes]) -> None:
-        for line in lines:
-            self._pending.put((_now(), "rx", line))
+    def _on_receive_batch(self, items) -> None:
+        for payload, ok in items:
+            self._pending.put((_now(), "rx", payload))
+            if not ok:
+                self._pending.put((_now(), "sys", f"帧校验失败: {payload.hex(' ').upper()}"))
 
     # ---------- 发送 ----------
     def send_raw(self) -> None:
@@ -540,7 +580,7 @@ class SerialSession(QWidget):
                 return
         else:
             nl = self.newline_combo.currentData()
-            data = (text + nl).encode(self._encoding(), errors="replace")
+            data = self._parse_escaped(text) + nl.encode(self._encoding(), errors="replace")
         if self._do_send(data):
             self._add_send_history(text)
 
@@ -554,7 +594,7 @@ class SerialSession(QWidget):
                 return
         else:
             nl = self.newline_combo.currentData()
-            data = (content + nl).encode(self._encoding(), errors="replace")
+            data = self._parse_escaped(content) + nl.encode(self._encoding(), errors="replace")
         self._do_send(data)
 
     def _parse_hex(self, text: str) -> bytes | None:
@@ -563,6 +603,36 @@ class SerialSession(QWidget):
             return bytes.fromhex(t)
         except ValueError:
             return None
+
+    def _parse_escaped(self, text: str) -> bytes:
+        """解析转义字符：\\r \\n \\t \\0 \\xNN \\\\，其余按当前编码编码。"""
+        enc = self._encoding()
+        out = bytearray()
+        i = 0
+        n = len(text)
+        while i < n:
+            c = text[i]
+            if c == "\\" and i + 1 < n:
+                nxt = text[i + 1]
+                if nxt == "r":
+                    out.append(0x0D); i += 2; continue
+                if nxt == "n":
+                    out.append(0x0A); i += 2; continue
+                if nxt == "t":
+                    out.append(0x09); i += 2; continue
+                if nxt == "0":
+                    out.append(0x00); i += 2; continue
+                if nxt == "\\":
+                    out.extend(b"\\"); i += 2; continue
+                if nxt in "xX" and i + 3 < n:
+                    try:
+                        out.append(int(text[i + 2:i + 4], 16)); i += 4; continue
+                    except ValueError:
+                        pass
+                out.extend((c + nxt).encode(enc, errors="replace")); i += 2; continue
+            out.extend(c.encode(enc, errors="replace"))
+            i += 1
+        return bytes(out)
 
     def _send_text(self, text: str) -> None:
         nl = self.newline_combo.currentData()
@@ -975,6 +1045,39 @@ class SerialSession(QWidget):
             if trigger and response and trigger.lower() in text.lower():
                 self._send_text(response)
 
+    # ---------- 协议解析 ----------
+    def _apply_protocol(self) -> None:
+        if not self.protocol_enable.isChecked():
+            self.serial.set_frame_parser(None)
+            self._sys("协议解析已关闭")
+            return
+
+        def parse_hex(text: str) -> bytes | None:
+            if not text.strip():
+                return b""
+            t = text.replace(" ", "").replace("0x", "").replace("0X", "")
+            try:
+                return bytes.fromhex(t)
+            except ValueError:
+                return None
+
+        header = parse_hex(self.protocol_header.text())
+        tail = parse_hex(self.protocol_tail.text())
+        if header is None or tail is None:
+            self._sys("帧头/帧尾 HEX 格式无效")
+            QMessageBox.warning(self, "协议解析", "帧头/帧尾必须是十六进制（如 AA 55）")
+            return
+        length_size = self.protocol_len_size.currentData()
+        checksum = self.protocol_checksum.currentData()
+        if not header and not tail and not length_size:
+            self._sys("协议解析配置无效")
+            QMessageBox.warning(self, "协议解析", "请至少配置帧头、帧尾或长度字节之一")
+            return
+        parser = FrameParser(header=header, tail=tail, length_size=length_size, checksum=checksum)
+        self.serial.set_frame_parser(parser)
+        self._sys(f"协议解析已启用：帧头={header.hex(' ').upper() or '无'} "
+                  f"帧尾={tail.hex(' ').upper() or '无'} 长度字节={length_size or '无'} 校验={checksum}")
+
     # ---------- 保存 ----------
     def _log_basename(self) -> str:
         port = self.port_combo.currentData() or ""
@@ -1155,6 +1258,10 @@ class SerialToolWindow(QMainWindow):
         self.auto_reply_action.toggled.connect(self._toggle_active_auto_reply)
         view.addAction(self.auto_reply_action)
 
+        self.protocol_action = QAction("协议解析", self, checkable=True)
+        self.protocol_action.toggled.connect(self._toggle_active_protocol)
+        view.addAction(self.protocol_action)
+
         self.plot_action = QAction("数值绘图", self, checkable=True)
         self.plot_action.toggled.connect(self._toggle_plot_window)
         view.addAction(self.plot_action)
@@ -1201,6 +1308,10 @@ class SerialToolWindow(QMainWindow):
         retention_action = QAction("日志保留策略...", self)
         retention_action.triggered.connect(self._set_log_retention)
         settings_menu.addAction(retention_action)
+        settings_menu.addSeparator()
+        ascii_hex_action = QAction("ASCII/HEX 转换...", self)
+        ascii_hex_action.triggered.connect(self._open_ascii_hex_dialog)
+        settings_menu.addAction(ascii_hex_action)
 
         # ---------- 帮助 ----------
         help_menu = menubar.addMenu("帮助")
@@ -1286,6 +1397,7 @@ class SerialToolWindow(QMainWindow):
         s = self.active_session()
         self.params_action.setChecked(bool(s and not s.serial_params_panel.isHidden()))
         self.auto_reply_action.setChecked(bool(s and not s.auto_reply_panel.isHidden()))
+        self.protocol_action.setChecked(bool(s and not s.protocol_panel.isHidden()))
 
     def _toggle_active_params(self, checked: bool) -> None:
         s = self.active_session()
@@ -1296,6 +1408,11 @@ class SerialToolWindow(QMainWindow):
         s = self.active_session()
         if s:
             s.auto_reply_panel.setVisible(checked)
+
+    def _toggle_active_protocol(self, checked: bool) -> None:
+        s = self.active_session()
+        if s:
+            s.protocol_panel.setVisible(checked)
 
     # ---------- 定时循环发送（全局，发给当前标签页） ----------
     def _timer_send_tick(self) -> None:
@@ -1894,7 +2011,7 @@ class SerialToolWindow(QMainWindow):
 
     def _set_session_transparent(self, s, flag: bool) -> None:
         s.setAttribute(Qt.WA_TranslucentBackground, flag)
-        for panel in (s.serial_params_panel, s.find_bar, s.matched_panel):
+        for panel in (s.serial_params_panel, s.find_bar, s.matched_panel, s.auto_reply_panel, s.protocol_panel):
             panel.setAttribute(Qt.WA_TranslucentBackground, flag)
         s.log_text.set_transparent(flag)
         s.matched_text.set_transparent(flag)
@@ -1943,6 +2060,87 @@ class SerialToolWindow(QMainWindow):
                 return
         central.set_bg_pixmap(QPixmap(bg_path.as_posix()))
         self._set_containers_transparent(True)
+
+    def _open_ascii_hex_dialog(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("ASCII / HEX 转换")
+        dlg.resize(640, 460)
+        layout = QVBoxLayout(dlg)
+
+        sep_combo = QComboBox()
+        sep_combo.addItem("空格分隔", " ")
+        sep_combo.addItem("无分隔", "")
+        sep_combo.addItem("0x 逗号", "0x,")
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("HEX 格式:"))
+        bar.addWidget(sep_combo)
+        bar.addStretch(1)
+        layout.addLayout(bar)
+
+        splitter = QSplitter(Qt.Vertical)
+        ascii_edit = QPlainTextEdit()
+        ascii_edit.setPlaceholderText("输入文本，例如 hello")
+        hex_edit = QPlainTextEdit()
+        hex_edit.setPlaceholderText("输入十六进制，例如 68 65 6C 6C 6F")
+
+        top = QWidget()
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(QLabel("ASCII 文本"))
+        tl.addWidget(ascii_edit)
+        bottom = QWidget()
+        bl = QVBoxLayout(bottom)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.addWidget(QLabel("HEX"))
+        bl.addWidget(hex_edit)
+        splitter.addWidget(top)
+        splitter.addWidget(bottom)
+        layout.addWidget(splitter, 1)
+
+        guard = {"busy": False}
+
+        def ascii_to_hex() -> None:
+            hx = ascii_edit.toPlainText().encode("utf-8").hex().upper()
+            sep = sep_combo.currentData()
+            if sep == " ":
+                out = " ".join(hx[i:i + 2] for i in range(0, len(hx), 2))
+            elif sep == "":
+                out = hx
+            else:
+                out = ", ".join("0x" + hx[i:i + 2] for i in range(0, len(hx), 2))
+            guard["busy"] = True
+            hex_edit.setPlainText(out)
+            guard["busy"] = False
+
+        def hex_to_ascii() -> None:
+            t = hex_edit.toPlainText()
+            t = (t.replace("0x", "").replace("0X", "")
+                 .replace(",", "").replace(" ", "").replace("\n", ""))
+            try:
+                data = bytes.fromhex(t)
+            except ValueError:
+                return
+            guard["busy"] = True
+            ascii_edit.setPlainText(data.decode("utf-8", errors="replace"))
+            guard["busy"] = False
+
+        def on_ascii_changed() -> None:
+            if not guard["busy"]:
+                ascii_to_hex()
+
+        def on_hex_changed() -> None:
+            if not guard["busy"]:
+                hex_to_ascii()
+
+        def on_sep_changed() -> None:
+            if ascii_edit.toPlainText():
+                ascii_to_hex()
+
+        ascii_edit.textChanged.connect(on_ascii_changed)
+        hex_edit.textChanged.connect(on_hex_changed)
+        sep_combo.currentIndexChanged.connect(on_sep_changed)
+
+        dlg.exec()
 
     def _show_about(self) -> None:
         box = QMessageBox(self)

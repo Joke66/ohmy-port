@@ -3,7 +3,7 @@
 ; 或直接编译（使用下方默认版本号）
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.2"
+  #define MyAppVersion "1.4.0"
 #endif
 
 #define MyAppName "OhmyPort"
