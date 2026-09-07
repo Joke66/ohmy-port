@@ -132,6 +132,80 @@ QTableView::item, QTreeView::item, QListWidget::item {
 }
 """
 
+# ============================================================
+# 动作按钮角色配色（随主题）：
+#   role="primary"  —— 填充强调色（发送 / 打开串口）
+#   role="danger"   —— 红色警示填充（关闭串口 / 停止记录）
+#   role="outline"  —— 强调色描边（暂停中「继续」等激活态）
+# 颜色取自各主题 qdarktheme 主色的语义近似值，随主题切换自动重生成。
+# ============================================================
+_ROLE_PALETTE = {
+    "black": {
+        "accent": "#8ab4f7", "accent_fg": "#202124",
+        "danger": "#e57373", "danger_fg": "#202124",
+    },
+    "day": {
+        "accent": "#1a73e8", "accent_fg": "#ffffff",
+        "danger": "#d93025", "danger_fg": "#ffffff",
+    },
+    "eye": {
+        "accent": "#2e7d32", "accent_fg": "#ffffff",
+        "danger": "#b3261e", "danger_fg": "#ffffff",
+    },
+}
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    c = QColor(hex_color)
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha:.3f})"
+
+
+def _role_qss(theme: str) -> str:
+    """生成动作按钮角色样式（追加在 _UI_QSS 之后，主题相关）。"""
+    pal = _ROLE_PALETTE.get(theme, _ROLE_PALETTE["day"])
+    acc, acc_fg = pal["accent"], pal["accent_fg"]
+    dng, dng_fg = pal["danger"], pal["danger_fg"]
+    acc_hover = QColor(acc).lighter(105).name()
+    acc_press = QColor(acc).darker(112).name()
+    dng_hover = QColor(dng).lighter(108).name()
+    dng_press = QColor(dng).darker(112).name()
+    # 透明占位边框保证与普通按钮同高、状态切换不抖动
+    return f"""
+QPushButton[role="primary"] {{
+    background-color: {acc};
+    color: {acc_fg};
+    border: 1px solid transparent;
+    font-weight: 600;
+}}
+QPushButton[role="primary"]:hover {{ background-color: {acc_hover}; }}
+QPushButton[role="primary"]:pressed {{ background-color: {acc_press}; }}
+QPushButton[role="danger"] {{
+    background-color: {dng};
+    color: {dng_fg};
+    border: 1px solid transparent;
+    font-weight: 600;
+}}
+QPushButton[role="danger"]:hover {{ background-color: {dng_hover}; }}
+QPushButton[role="danger"]:pressed {{ background-color: {dng_press}; }}
+QPushButton[role="outline"] {{
+    background-color: transparent;
+    color: {acc};
+    border: 1px solid {acc};
+    font-weight: 600;
+}}
+QPushButton[role="outline"]:hover {{ background-color: {_rgba(acc, 0.12)}; }}
+QPushButton[role="outline"]:pressed {{ background-color: {_rgba(acc, 0.24)}; }}
+"""
+
+
+def _set_role(btn: QPushButton, role: str) -> None:
+    """设置按钮角色并强制 repolish，使属性选择器样式立即生效。"""
+    btn.setProperty("role", role)
+    st = btn.style()
+    st.unpolish(btn)
+    st.polish(btn)
+    btn.update()
+
 # 日志等宽字体选项
 _FONT_OPTIONS = [
     ("系统默认等宽", "default"),
@@ -424,6 +498,7 @@ class SerialSession(QWidget):
         conn.addWidget(self.baud_combo)
         self.connect_btn = _make_btn("打开串口", self.toggle_connection)
         self.connect_btn.setToolTip("打开 / 关闭当前串口")
+        _set_role(self.connect_btn, "primary")
         conn.addWidget(self.connect_btn)
         conn.addStretch(1)
         layout.addLayout(conn)
@@ -590,9 +665,10 @@ class SerialSession(QWidget):
         send.addWidget(self.newline_combo)
         self.hex_send_check = QCheckBox("HEX发送")
         send.addWidget(self.hex_send_check)
-        send_btn = _make_btn("发送", self.send_raw)
-        send_btn.setToolTip("发送当前输入内容")
-        send.addWidget(send_btn)
+        self.send_btn = _make_btn("发送", self.send_raw)
+        self.send_btn.setToolTip("发送当前输入内容")
+        _set_role(self.send_btn, "primary")
+        send.addWidget(self.send_btn)
         layout.addLayout(send)
 
         # 自动应答（隐藏面板）
@@ -663,6 +739,7 @@ class SerialSession(QWidget):
                 self._known_ports = current
                 self.serial.disconnect()
                 self.connect_btn.setText("打开串口")
+                _set_role(self.connect_btn, "primary")
                 self._sys(f"串口 {port} 已断开")
                 if self._logmgr.is_open:
                     self._stop_record()
@@ -676,6 +753,7 @@ class SerialSession(QWidget):
         if self.serial.is_connected:
             self.serial.disconnect()
             self.connect_btn.setText("打开串口")
+            _set_role(self.connect_btn, "primary")
             self._sys("已关闭串口")
             if self._logmgr.is_open:
                 self._stop_record()
@@ -700,6 +778,7 @@ class SerialSession(QWidget):
             )
             if self.serial.connect(port, baud, **kwargs):
                 self.connect_btn.setText("关闭串口")
+                _set_role(self.connect_btn, "danger")
                 self._sys(f"已打开 {port} @ {baud}")
                 if self.window._auto_record and not self._logmgr.is_open:
                     self._start_record()
@@ -949,7 +1028,7 @@ class SerialSession(QWidget):
                 self._sys(f"记录写入失败：{self._logmgr.error}")
                 QMessageBox.warning(self, "记录失败", f"日志写入失败，已停止记录：\n{self._logmgr.error}")
                 self._logmgr.close()
-                self.record_btn.setText("开始记录")
+                self._sync_record_btn()
         self._update_stats()
         if not self._frozen:
             self._scroll()
@@ -1003,6 +1082,7 @@ class SerialSession(QWidget):
     def toggle_pause(self) -> None:
         self._paused = not self._paused
         self.pause_btn.setText("继续" if self._paused else "暂停")
+        _set_role(self.pause_btn, "outline" if self._paused else "")
         if not self._paused:
             self._rerender()
 
@@ -1304,16 +1384,24 @@ class SerialSession(QWidget):
         else:
             self._start_record()
 
+    def _sync_record_btn(self) -> None:
+        """按记录状态刷新按钮文本与角色（记录中 danger 红色）。"""
+        if self._logmgr.is_open:
+            self.record_btn.setText("停止记录")
+            _set_role(self.record_btn, "danger")
+        else:
+            self.record_btn.setText("开始记录")
+            _set_role(self.record_btn, "")
+
     def _start_record(self) -> None:
         if not self._logmgr.is_open:
             self._open_record_file()
-        if self._logmgr.is_open:
-            self.record_btn.setText("停止记录")
+        self._sync_record_btn()
 
     def _stop_record(self) -> None:
         if self._logmgr.is_open:
             self._logmgr.close()
-        self.record_btn.setText("开始记录")
+        self._sync_record_btn()
         self._sys("已停止记录")
 
     def _open_record_file(self) -> None:
@@ -2239,7 +2327,7 @@ class SerialToolWindow(QMainWindow):
 
     def _apply_theme_qss(self) -> None:
         cfg = dict(_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
-        cfg["additional_qss"] = _UI_QSS
+        cfg["additional_qss"] = _UI_QSS + _role_qss(self._theme)
         qdarktheme.setup_theme(**cfg)
 
     def _muted_color(self) -> str:
