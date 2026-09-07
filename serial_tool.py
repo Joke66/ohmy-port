@@ -33,14 +33,14 @@ import qdarktheme
 from PIL import Image, ImageFilter
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QIcon,
-                           QKeySequence, QPainter, QPalette, QPixmap, QShortcut,
-                           QTextCharFormat, QTextDocument)
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QFont,
+                           QFontDatabase, QIcon, QKeySequence, QPainter, QPalette,
+                           QPixmap, QShortcut, QTextCharFormat, QTextCursor, QTextDocument)
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QPushButton, QSlider, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
+    QPlainTextEdit, QPushButton, QSlider, QSpinBox, QSplitter, QStackedWidget, QSystemTrayIcon, QTabWidget,
     QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout, QWidget,
 )
 
@@ -57,22 +57,39 @@ from plot_widget import PlotRule, PlotWindow, _fmt_val
 from log_manager import LogManager
 from frame_parser import FrameParser
 
-_HL_BG = QColor("#fff59d")
-_HL_FG = QColor("#000000")
-_SEARCH_BG = QColor("#ffb74d")
-_SEARCH_BG_CURRENT = QColor("#ff9800")
+# 日志配色（随主题）：时间戳 / 发送 / 系统 / 高亮
+_LOG_THEME_COLORS = {
+    "black": {
+        "ts": "#8a9199", "tx": "#4fc3f7", "sys": "#8a9199",
+        "hl_bg": "#6d5c00", "hl_fg": "#ffffff",
+        "search_bg": "#8a4d00", "search_bg_cur": "#a86100", "search_fg": "#ffffff",
+    },
+    "day": {
+        "ts": "#6b7280", "tx": "#0e7490", "sys": "#6b7280",
+        "hl_bg": "#fff59d", "hl_fg": "#000000",
+        "search_bg": "#ffb74d", "search_bg_cur": "#ff9800", "search_fg": "#000000",
+    },
+    "eye": {
+        "ts": "#5b6b5e", "tx": "#0e7490", "sys": "#5b6b5e",
+        "hl_bg": "#fff59d", "hl_fg": "#000000",
+        "search_bg": "#ffb74d", "search_bg_cur": "#ff9800", "search_fg": "#000000",
+    },
+}
+
+
+# 日志等宽字体选项
+_FONT_OPTIONS = [
+    ("系统默认等宽", "default"),
+    ("Consolas", "Consolas"),
+    ("Cascadia Code", "Cascadia Code"),
+    ("JetBrains Mono", "JetBrains Mono"),
+]
 
 
 def _make_btn(text: str, slot) -> QPushButton:
     btn = QPushButton(text)
     btn.clicked.connect(slot)
     return btn
-
-
-
-
-
-
 
 
 class CommandButton(QPushButton):
@@ -684,15 +701,42 @@ class SerialSession(QWidget):
             return payload.decode(self._encoding(), errors="replace")
         return payload
 
-    def _format_line(self, ts: str, direction: str, payload) -> str:
+    def _display_body(self, payload) -> str:
         if isinstance(payload, bytes):
             if self._hex:
-                body = payload.hex(" ").upper()
-            else:
-                body = payload.decode(self._encoding(), errors="replace")
+                return payload.hex(" ").upper()
+            return payload.decode(self._encoding(), errors="replace")
+        return str(payload)
+
+    def _log_colors(self) -> dict:
+        return _LOG_THEME_COLORS.get(self.window._theme, _LOG_THEME_COLORS["day"])
+
+    def _format_line(self, ts: str, direction: str, payload) -> str:
+        return f"[{ts}] {self._dir_mark(direction)}{self._display_body(payload)}"
+
+    def _format_segments(self, ts: str, direction: str, payload) -> list:
+        """把一行拆成 [(文本, 颜色hex或None)] 段；None 表示默认前景色。"""
+        c = self._log_colors()
+        if direction == "tx":
+            body_color = c["tx"]
+        elif direction == "sys":
+            body_color = c["sys"]
         else:
-            body = payload
-        return f"[{ts}] {self._dir_mark(direction)}{body}"
+            body_color = None
+        return [("[" + ts + "] ", c["ts"]),
+                (self._dir_mark(direction) + self._display_body(payload), body_color)]
+
+    def _append_colored_lines(self, widget: QPlainTextEdit, lines: list) -> None:
+        cursor = widget.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        for segments in lines:
+            for text, color in segments:
+                fmt = QTextCharFormat()
+                if color is not None:
+                    fmt.setForeground(QColor(color))
+                cursor.insertText(text, fmt)
+            cursor.insertBlock()
+        widget.setTextCursor(cursor)
 
     def _record_line(self, ts: str, direction: str, payload) -> str:
         # 记录固定为文本形式，不受「HEX 显示」切换影响
@@ -708,8 +752,8 @@ class SerialSession(QWidget):
                 break
         if not items:
             return
-        pieces: list[str] = []
-        matched_pieces: list[str] = []
+        lines: list = []
+        matched_lines: list = []
         rx_texts: list[str] = []
         for ts, direction, payload in items:
             self._buffer.append((ts, direction, payload))
@@ -719,17 +763,17 @@ class SerialSession(QWidget):
             if self._paused and direction != "sys":
                 continue  # 暂停只冻结显示（日志+绘图），后台仍缓冲/记录
             if self._filter.visible(text):
-                pieces.append(self._format_line(ts, direction, payload))
+                lines.append(self._format_segments(ts, direction, payload))
             if self._filter.mode == "split" and self._filter.matched(text):
-                matched_pieces.append(self._format_line(ts, direction, payload))
+                matched_lines.append(self._format_segments(ts, direction, payload))
             if direction == "rx":
                 rx_texts.append(text)
         self._suppress_scroll = True
         try:
-            if pieces:
-                self.log_text.appendPlainText("\n".join(pieces))
-            if matched_pieces:
-                self.matched_text.appendPlainText("\n".join(matched_pieces))
+            if lines:
+                self._append_colored_lines(self.log_text, lines)
+            if matched_lines:
+                self._append_colored_lines(self.matched_text, matched_lines)
         finally:
             self._suppress_scroll = False
         if rx_texts:
@@ -767,13 +811,13 @@ class SerialSession(QWidget):
         self._suppress_scroll = True
         try:
             self.log_text.clear()
-            pieces: list[str] = []
+            lines: list = []
             for ts, direction, payload in self._buffer:
                 text = self._payload_text(payload)
                 if self._filter.visible(text):
-                    pieces.append(self._format_line(ts, direction, payload))
-            if pieces:
-                self.log_text.appendPlainText("\n".join(pieces))
+                    lines.append(self._format_segments(ts, direction, payload))
+            if lines:
+                self._append_colored_lines(self.log_text, lines)
         finally:
             self._suppress_scroll = False
         self._scroll()
@@ -961,9 +1005,10 @@ class SerialSession(QWidget):
     def _filter_selections(self, widget: QPlainTextEdit) -> list:
         if self._hex or not self._filter.highlight_enabled() or not self._filter.keywords:
             return []
+        c = self._log_colors()
         fmt = QTextCharFormat()
-        fmt.setBackground(_HL_BG)
-        fmt.setForeground(_HL_FG)
+        fmt.setBackground(QColor(c["hl_bg"]))
+        fmt.setForeground(QColor(c["hl_fg"]))
         flags = (QTextDocument.FindFlag.FindCaseSensitively
                  if self._filter.case_sensitive else QTextDocument.FindFlag(0))
         doc = widget.document()
@@ -981,12 +1026,13 @@ class SerialSession(QWidget):
     def _search_selections(self, widget: QPlainTextEdit) -> list:
         if widget is not self.log_text or not self._search_matches:
             return []
+        c = self._log_colors()
         fmt = QTextCharFormat()
-        fmt.setBackground(_SEARCH_BG)
-        fmt.setForeground(QColor("#000000"))
+        fmt.setBackground(QColor(c["search_bg"]))
+        fmt.setForeground(QColor(c["search_fg"]))
         cur_fmt = QTextCharFormat()
-        cur_fmt.setBackground(_SEARCH_BG_CURRENT)
-        cur_fmt.setForeground(QColor("#000000"))
+        cur_fmt.setBackground(QColor(c["search_bg_cur"]))
+        cur_fmt.setForeground(QColor(c["search_fg"]))
         selections: list = []
         for i, cursor in enumerate(self._search_matches):
             sel = QTextEdit.ExtraSelection()
@@ -1028,12 +1074,12 @@ class SerialSession(QWidget):
         if self._filter.mode != "split":
             return
         self.matched_text.clear()
-        pieces: list[str] = []
+        lines: list = []
         for ts, direction, payload in self._buffer:
             if self._filter.matched(self._payload_text(payload)):
-                pieces.append(self._format_line(ts, direction, payload))
-        if pieces:
-            self.matched_text.appendPlainText("\n".join(pieces))
+                lines.append(self._format_segments(ts, direction, payload))
+        if lines:
+            self._append_colored_lines(self.matched_text, lines)
         self._apply_highlight(self.matched_text)
 
     def _clear_matched(self) -> None:
@@ -1169,6 +1215,11 @@ class SerialToolWindow(QMainWindow):
         self._shard_mb = 5
         self._log_retention = "month"
         self._last_update_check = ""
+        self._font_family = "default"
+        self._wrap_enabled = True
+        self._close_behavior = "exit"
+        self._close_confirm = True
+        self._force_quit = False
         self._bg_dir = str(_data_dir() / "background")
         self._bg_image = ""
         self._bg_blur = 10
@@ -1179,6 +1230,7 @@ class SerialToolWindow(QMainWindow):
         self._build()
         self.plot_window = PlotWindow(self)
         self._build_menu()
+        self._setup_tray()
         self._apply_theme_qss()
         self.plot_window.finished.connect(lambda _r: self.plot_action.setChecked(False))
         self._timer_send = QTimer(self)
@@ -1281,19 +1333,14 @@ class SerialToolWindow(QMainWindow):
         self.plot_action.toggled.connect(self._toggle_plot_window)
         view.addAction(self.plot_action)
 
-        zoom_in = QAction("字体增大", self)
-        zoom_in.setShortcut(QKeySequence("Ctrl+="))
-        zoom_in.triggered.connect(lambda: self._zoom_log(1))
-        zoom_out = QAction("字体减小", self)
-        zoom_out.setShortcut(QKeySequence("Ctrl+-"))
-        zoom_out.triggered.connect(lambda: self._zoom_log(-1))
-        zoom_reset = QAction("重置字体", self)
-        zoom_reset.setShortcut(QKeySequence("Ctrl+0"))
-        zoom_reset.triggered.connect(self._reset_font)
         view.addSeparator()
-        view.addAction(zoom_in)
-        view.addAction(zoom_out)
-        view.addAction(zoom_reset)
+        self.wrap_action = QAction("自动换行", self, checkable=True)
+        self.wrap_action.setChecked(self._wrap_enabled)
+        self.wrap_action.toggled.connect(self._toggle_wrap)
+        view.addAction(self.wrap_action)
+        ascii_hex_action = QAction("ASCII/HEX 转换...", self)
+        ascii_hex_action.triggered.connect(self._open_ascii_hex_dialog)
+        view.addAction(ascii_hex_action)
 
         # ---------- 设置 ----------
         settings_menu = menubar.addMenu("设置")
@@ -1310,6 +1357,22 @@ class SerialToolWindow(QMainWindow):
         bg_action.triggered.connect(self._open_background_dialog)
         settings_menu.addAction(bg_action)
         settings_menu.addSeparator()
+        font_action = QAction("字体...", self)
+        font_action.triggered.connect(self._choose_font)
+        settings_menu.addAction(font_action)
+        zoom_in = QAction("字体增大", self)
+        zoom_in.setShortcut(QKeySequence("Ctrl+="))
+        zoom_in.triggered.connect(lambda: self._zoom_log(1))
+        zoom_out = QAction("字体减小", self)
+        zoom_out.setShortcut(QKeySequence("Ctrl+-"))
+        zoom_out.triggered.connect(lambda: self._zoom_log(-1))
+        zoom_reset = QAction("重置字体", self)
+        zoom_reset.setShortcut(QKeySequence("Ctrl+0"))
+        zoom_reset.triggered.connect(self._reset_font)
+        settings_menu.addAction(zoom_in)
+        settings_menu.addAction(zoom_out)
+        settings_menu.addAction(zoom_reset)
+        settings_menu.addSeparator()
         self.auto_record_action = QAction("连接后自动保存日志", self, checkable=True)
         self.auto_record_action.setChecked(self._auto_record)
         self.auto_record_action.toggled.connect(self._set_auto_record)
@@ -1324,9 +1387,14 @@ class SerialToolWindow(QMainWindow):
         retention_action.triggered.connect(self._set_log_retention)
         settings_menu.addAction(retention_action)
         settings_menu.addSeparator()
-        ascii_hex_action = QAction("ASCII/HEX 转换...", self)
-        ascii_hex_action.triggered.connect(self._open_ascii_hex_dialog)
-        settings_menu.addAction(ascii_hex_action)
+        self.tray_action = QAction("关闭时最小化到托盘", self, checkable=True)
+        self.tray_action.setChecked(self._close_behavior == "tray")
+        self.tray_action.toggled.connect(self._set_close_behavior)
+        settings_menu.addAction(self.tray_action)
+        self.close_confirm_action = QAction("关闭时询问", self, checkable=True)
+        self.close_confirm_action.setChecked(self._close_confirm)
+        self.close_confirm_action.toggled.connect(self._set_close_confirm)
+        settings_menu.addAction(self.close_confirm_action)
 
         # ---------- 帮助 ----------
         help_menu = menubar.addMenu("帮助")
@@ -1377,6 +1445,8 @@ class SerialToolWindow(QMainWindow):
         self._sessions.append(s)
         if self._bg_enabled and self._bg_image:
             self._set_session_transparent(s, True)
+        self._apply_font_to_session(s)
+        self._apply_wrap_to_session(s)
         idx = self.session_tabs.addTab(s, s.title())
         self.session_tabs.setCurrentIndex(idx)
         self.plot_window.set_sessions(self._sessions)
@@ -1654,11 +1724,62 @@ class SerialToolWindow(QMainWindow):
     def _reset_font(self) -> None:
         s = self.active_session()
         if s:
-            f = s.log_text.font()
-            f.setPointSize(10)
+            f = self._make_log_font(10)
             s.log_text.setFont(f)
             s.matched_text.setFont(f)
             self._save_config()
+
+    def _make_log_font(self, point_size: int) -> QFont:
+        if self._font_family in ("", "default"):
+            f = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        else:
+            f = QFont(self._font_family)
+        f.setPointSize(max(1, point_size))
+        return f
+
+    def _apply_font_to_session(self, s) -> None:
+        fs = s.log_text.font().pointSize()
+        if fs <= 0:
+            fs = 10
+        f = self._make_log_font(fs)
+        s.log_text.setFont(f)
+        s.matched_text.setFont(f)
+
+    def _apply_wrap_to_session(self, s) -> None:
+        mode = (QPlainTextEdit.LineWrapMode.WidgetWidth if self._wrap_enabled
+                else QPlainTextEdit.LineWrapMode.NoWrap)
+        s.log_text.setLineWrapMode(mode)
+        s.matched_text.setLineWrapMode(mode)
+
+    def _toggle_wrap(self, checked: bool) -> None:
+        self._wrap_enabled = checked
+        for s in self._sessions:
+            self._apply_wrap_to_session(s)
+        self._save_config()
+
+    def _choose_font(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("日志字体")
+        form = QFormLayout(dlg)
+        combo = QComboBox()
+        for label, key in _FONT_OPTIONS:
+            combo.addItem(label, key)
+        idx = combo.findData(self._font_family)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        form.addRow("等宽字体", combo)
+        tip = QLabel("字体未安装时会自动回退到系统默认等宽字体。")
+        tip.setStyleSheet("color: #888888;")
+        form.addRow("", tip)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._font_family = combo.currentData()
+        for s in self._sessions:
+            self._apply_font_to_session(s)
+        self._save_config()
 
     # ---------- 保存 / 目录 ----------
     def _log_dir(self) -> Path:
@@ -1701,6 +1822,14 @@ class SerialToolWindow(QMainWindow):
             self._log_retention = data["log_retention"]
         if isinstance(data.get("last_update_check"), str):
             self._last_update_check = data["last_update_check"]
+        if isinstance(data.get("font_family"), str) and data["font_family"] in [k for _, k in _FONT_OPTIONS]:
+            self._font_family = data["font_family"]
+        if isinstance(data.get("wrap_enabled"), bool):
+            self._wrap_enabled = data["wrap_enabled"]
+        if isinstance(data.get("close_behavior"), str) and data["close_behavior"] in ("exit", "tray"):
+            self._close_behavior = data["close_behavior"]
+        if isinstance(data.get("close_confirm"), bool):
+            self._close_confirm = data["close_confirm"]
         if isinstance(data.get("log_dir"), str) and data["log_dir"]:
             self._log_dir_override = data["log_dir"]
         if isinstance(data.get("bg_dir"), str) and data["bg_dir"]:
@@ -1765,6 +1894,10 @@ class SerialToolWindow(QMainWindow):
             "shard_mb": self._shard_mb,
             "log_retention": self._log_retention,
             "last_update_check": self._last_update_check,
+            "font_family": self._font_family,
+            "wrap_enabled": self._wrap_enabled,
+            "close_behavior": self._close_behavior,
+            "close_confirm": self._close_confirm,
             "log_dir": self._log_dir_override,
             "bg_dir": self._bg_dir,
             "bg_image": self._bg_image,
@@ -1914,6 +2047,14 @@ class SerialToolWindow(QMainWindow):
             self._shard_mb = max(1, data["shard_mb"])
         if isinstance(data.get("log_retention"), str) and data["log_retention"] in _LOG_RETENTION_KEYS:
             self._log_retention = data["log_retention"]
+        if isinstance(data.get("font_family"), str) and data["font_family"] in [k for _, k in _FONT_OPTIONS]:
+            self._font_family = data["font_family"]
+        if isinstance(data.get("wrap_enabled"), bool):
+            self._wrap_enabled = data["wrap_enabled"]
+        if isinstance(data.get("close_behavior"), str) and data["close_behavior"] in ("exit", "tray"):
+            self._close_behavior = data["close_behavior"]
+        if isinstance(data.get("close_confirm"), bool):
+            self._close_confirm = data["close_confirm"]
         if isinstance(data.get("log_dir"), str):
             self._log_dir_override = data["log_dir"] or None
         if isinstance(data.get("bg_image"), str):
@@ -2172,12 +2313,74 @@ class SerialToolWindow(QMainWindow):
             label.setOpenExternalLinks(True)
         box.exec()
 
-    def closeEvent(self, event) -> None:
+    def _setup_tray(self) -> None:
+        self.tray_icon = QSystemTrayIcon(QIcon(str(_resource_path("my-icon.ico"))), self)
+        self.tray_icon.setToolTip(_APP_NAME)
+        menu = QMenu()
+        show_action = menu.addAction("显示主窗口")
+        show_action.triggered.connect(self._show_from_tray)
+        quit_action = menu.addAction("退出")
+        quit_action.triggered.connect(self._quit)
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger,
+                      QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._show_from_tray()
+
+    def _quit(self) -> None:
+        self._force_quit = True
+        self.close()
+
+    def _set_close_behavior(self, checked: bool) -> None:
+        self._close_behavior = "tray" if checked else "exit"
         self._save_config()
-        self._timer_send.stop()
-        for s in self._sessions:
-            s.shutdown()
-        super().closeEvent(event)
+
+    def _set_close_confirm(self, checked: bool) -> None:
+        self._close_confirm = checked
+        self._save_config()
+
+    def _should_tray_on_close(self) -> bool:
+        if self._force_quit:
+            return False
+        if self._close_confirm:
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("关闭")
+            dlg.setIcon(QMessageBox.Icon.Question)
+            dlg.setText("关闭时是否最小化到托盘？")
+            tray_btn = dlg.addButton("最小化到托盘", QMessageBox.ButtonRole.YesRole)
+            exit_btn = dlg.addButton("直接退出", QMessageBox.ButtonRole.NoRole)
+            noask = QCheckBox("不再提示")
+            dlg.setCheckBox(noask)
+            dlg.exec()
+            tray = dlg.clickedButton() is tray_btn
+            if noask.isChecked():
+                self._close_confirm = False
+                self._close_behavior = "tray" if tray else "exit"
+                self._save_config()
+            return tray
+        return self._close_behavior == "tray"
+
+    def closeEvent(self, event) -> None:
+        if self._should_tray_on_close():
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                _APP_NAME, "已最小化到托盘，双击图标恢复", QSystemTrayIcon.MessageIcon.Information, 2000)
+        else:
+            self._save_config()
+            self._timer_send.stop()
+            for s in self._sessions:
+                s.shutdown()
+            self.tray_icon.hide()
+            super().closeEvent(event)
 
 
 def _resource_path(filename: str) -> Path:
