@@ -32,7 +32,7 @@ from pathlib import Path
 import qdarktheme
 from PIL import Image, ImageFilter
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QIcon,
                            QKeySequence, QPainter, QPalette, QPixmap, QShortcut,
                            QTextCharFormat, QTextDocument)
@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QSlider, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
-    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout, QWidget,
 )
 
 from common import (
@@ -101,6 +101,20 @@ class _WheelZoomFilter(QObject):
             elif delta < 0:
                 obj.zoomOut(1)
             return True
+        return False
+
+
+class _LogWheelFilter(QObject):
+    """日志区滚轮：向上滚动（远离底部）时通知会话进入固定模式。"""
+
+    def __init__(self, session):
+        super().__init__()
+        self._session = session
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Wheel:
+            if event.angleDelta().y() > 0:
+                self._session._on_wheel_up()
         return False
 
 
@@ -382,7 +396,8 @@ class SerialSession(QWidget):
         self.log_text.installEventFilter(self.window._wheel_filter)
         self.log_text.setContextMenuPolicy(Qt.CustomContextMenu)
         self.log_text.customContextMenuRequested.connect(self._show_log_menu)
-        self.log_text.verticalScrollBar().valueChanged.connect(self._on_log_scrolled)
+        self._log_wheel_filter = _LogWheelFilter(self)
+        self.log_text.viewport().installEventFilter(self._log_wheel_filter)
         layout.addWidget(self.log_text, 3)
 
         self.find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
@@ -789,22 +804,22 @@ class SerialSession(QWidget):
         self.fixed_check.blockSignals(True)
         self.fixed_check.setChecked(frozen)
         self.fixed_check.blockSignals(False)
+        self._show_fixed_hint("已进入固定显示" if frozen else "已退出固定显示")
 
     def _on_fixed_toggle(self, checked: bool) -> None:
         self._set_frozen(checked)
         if not checked:
             self._scroll()
 
-    def _on_log_scrolled(self, _value: int) -> None:
-        if self._suppress_scroll:
-            return
-        sb = self.log_text.verticalScrollBar()
-        dist = sb.maximum() - sb.value()
-        page = max(1, sb.pageStep())
-        if self._frozen and dist < page / 10:
-            self._set_frozen(False)
-        elif not self._frozen and dist > page / 3:
+    def _on_wheel_up(self) -> None:
+        # 滚轮向上滚动（远离底部）→ 立即进入固定显示
+        if not self._frozen:
             self._set_frozen(True)
+
+    def _show_fixed_hint(self, text: str) -> None:
+        vp = self.log_text.viewport()
+        pos = vp.mapToGlobal(QPoint(vp.width() // 2, 20))
+        QToolTip.showText(pos, text, self.log_text)
 
     # ---------- 查找 ----------
     def _show_find_bar(self) -> None:
