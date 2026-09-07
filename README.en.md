@@ -19,7 +19,8 @@ A standalone serial debugging tool built with Python + PySide6, supporting multi
 - **Auto reply**: keyword-triggered replies
 - **Tools**: ASCII ↔ HEX bidirectional conversion
 - **Background skin**: full-window background image with adjustable blur
-- **Themes**: dark / eye-friendly / light (powered by pyqtdarktheme)
+- **Themes**: follow system / dark / eye-friendly / light (powered by qdarktheme; can auto-sync with OS light/dark)
+- **UI polish**: main toolbar with theme-tinted SVG icons, status bar with live per-port stats, primary/secondary action styling, smooth panel expand/collapse
 - **System tray**: minimize to tray on close (configurable default behavior / don't ask again)
 
 ## Install dependencies
@@ -59,7 +60,7 @@ Outputs:
 2. Type in the send box, press Enter or click "发送"; check "HEX发送" to send hex (e.g. `01 03 00 0A`).
 3. View → "发送辅助" to add common commands (name + content); click to send, right-click to edit/delete; add pages to organize.
 4. View → "数值绘图" to open the plot window and add extraction rules (e.g. `temp=(\d+\.?\d*)` or keyword `NTC`).
-5. View → theme to switch dark / eye-friendly / light.
+5. Settings → theme to switch follow-system / dark / eye-friendly / light.
 6. Settings → "背景皮肤" to set the background image; the dialog shows the image directory — drop images there and click "刷新".
 7. Settings → retention policy to set log retention (week / month / half-year / year / unlimited; default one month).
 8. Settings → export/import config to back up or share: includes global settings, all serial tab parameters, **and all send-assist command pages and commands** (name, content, page, cycle flag).
@@ -96,6 +97,7 @@ At ~30 bytes per line (8N1), 921600 baud is roughly 3,000 lines/s; default setti
 ohmy-port/
 ├── serial_tool.py       # entry point + main UI (tabs, filter, send assist, themes, tray)
 ├── common.py            # constants & pure logic (LogFilter, byte formatting, data dir)
+├── icons.py             # embedded SVG icon set (recolored per theme)
 ├── serial_worker.py     # serial read/write thread and queue
 ├── plot_widget.py       # numerical plotting (PlotRule / PlotWidget / PlotWindow)
 ├── log_manager.py       # log writing, sharding, retention cleanup
@@ -138,6 +140,6 @@ python benchmark.py
 
 ## Version
 
-- Version: 1.6.0
+- Version: 1.7.0
 - Author: ShineZhang
 - Date: 2026-09-07
