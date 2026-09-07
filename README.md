@@ -81,4 +81,4 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 - 版本：1.4.0
 - 作者：ShineZhang
-- 日期：2026-09-05
+- 日期：2026-09-07
