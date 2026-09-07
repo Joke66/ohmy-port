@@ -29,15 +29,13 @@ import threading
 import time
 from pathlib import Path
 
-import serial
-from serial.tools import list_ports
-
-import pyqtgraph as pg
 import qdarktheme
 from PIL import Image, ImageFilter
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QShortcut, QTextCharFormat, QTextDocument
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QIcon,
+                           QKeySequence, QPainter, QPalette, QPixmap, QShortcut,
+                           QTextCharFormat, QTextDocument)
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
@@ -46,112 +44,22 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
-_BAUDS = ["115200", "57600", "38400", "19200", "9600", "4800", "2400", "921600"]
-_ENCODINGS = [("UTF-8", "utf-8"), ("GBK", "gbk"), ("ASCII", "ascii")]
-_NEWLINES = [("无", ""), ("\\r", "\r"), ("\\n", "\n"), ("\\r\\n", "\r\n")]
+from common import (
+    _APP_AUTHOR, _APP_DATE, _APP_NAME, _APP_URL, _APP_VERSION,
+    _BAUDS, _ENCODINGS, _NEWLINES, _HL_INTERVAL, _HOTPLUG_MS, _FLUSH_MS,
+    _LOG_RETENTION_KEYS, _LOG_RETENTION_OPTIONS, _MAX_LINES,
+    _THEME_CFG, _UPDATE_API, _UPDATE_PAGE,
+    _data_dir, _extract_numbers, _fmt_bytes, _now, _parse_version,
+    LogFilter,
+)
+from serial_worker import SerialMonitor
+from plot_widget import PlotRule, PlotWindow, _fmt_val
+from log_manager import LogManager
+
 _HL_BG = QColor("#fff59d")
 _HL_FG = QColor("#000000")
 _SEARCH_BG = QColor("#ffb74d")
 _SEARCH_BG_CURRENT = QColor("#ff9800")
-
-# 性能 / 行为参数
-_MAX_LINES = 50_000
-_FLUSH_MS = 80
-_READ_CHUNK = 4096
-_HL_INTERVAL = 0.5
-_HOTPLUG_MS = 2000
-_PLOT_WINDOW = 600
-
-_DATA_DIR: Path | None = None
-
-
-def _exe_dir() -> Path:
-    """exe 或脚本所在目录。"""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
-
-
-def _data_dir() -> Path:
-    """可写数据目录：优先 exe 同级，不可写则落到 %APPDATA%\\OhmyPort。"""
-    global _DATA_DIR
-    if _DATA_DIR is None:
-        base = _exe_dir()
-        probe = base / ".ohmyport_probe"
-        try:
-            probe.write_text("", encoding="utf-8")
-            probe.unlink()
-            _DATA_DIR = base
-        except OSError:
-            appdata = Path(os.environ.get("APPDATA") or str(Path.home())) / "OhmyPort"
-            try:
-                appdata.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                appdata = base
-            _DATA_DIR = appdata
-    return _DATA_DIR
-
-
-# 日志保留策略：显示名 / 配置键 / 保留天数（0 表示无限制）
-_LOG_RETENTION_OPTIONS = [
-    ("一周", "week", 7),
-    ("一个月", "month", 30),
-    ("半年", "half_year", 180),
-    ("一年", "year", 365),
-    ("无限制", "unlimited", 0),
-]
-_LOG_RETENTION_KEYS = [k for _, k, _ in _LOG_RETENTION_OPTIONS]
-_LOG_RETENTION_DAYS = {k: d for _, k, d in _LOG_RETENTION_OPTIONS}
-
-
-_APP_NAME = "OhmyPort"
-_APP_VERSION = "1.3.1"
-_APP_AUTHOR = "ShineZhang"
-_APP_DATE = "2026-09-05"
-_APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
-_UPDATE_API = "https://gitee.com/api/v5/repos/Shine_Zhang/ohmy-port/releases/latest"
-_UPDATE_PAGE = "https://gitee.com/Shine_Zhang/ohmy-port/releases"
-
-
-def _parse_version(text: str) -> tuple:
-    m = re.search(r"(\d+)\.(\d+)\.(\d+)", text or "")
-    if not m:
-        return ()
-    return tuple(int(x) for x in m.groups())
-
-
-_THEME_CFG = {
-    "black": {"theme": "dark"},
-    "day": {"theme": "light"},
-    "eye": {
-        "theme": "light",
-        "custom_colors": {
-            "background": "#c8e6c9",
-            "foreground": "#1f3b26",
-            "primary": "#2e7d32",
-            "input.background": "#eaf6ec",
-            "border": "#a5d6a7",
-        },
-    },
-}
-
-_NUM_RE = re.compile(r"-?\d+\.?\d*")
-
-
-def _now() -> str:
-    return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-
-
-def _fmt_bytes(n: int) -> str:
-    if n < 1024:
-        return f"{n} B"
-    if n < 1024 * 1024:
-        return f"{n / 1024:.1f} KB"
-    return f"{n / 1024 / 1024:.1f} MB"
-
-
-def _extract_numbers(text: str) -> list[float]:
-    return [float(m) for m in _NUM_RE.findall(text)]
 
 
 def _make_btn(text: str, slot) -> QPushButton:
@@ -160,386 +68,10 @@ def _make_btn(text: str, slot) -> QPushButton:
     return btn
 
 
-class LogFilter:
-    """多关键词过滤/高亮。mode: highlight / include / exclude / split。"""
-
-    def __init__(self, keywords=None, mode="highlight", case_sensitive=False):
-        self.keywords = [k for k in (keywords or []) if k]
-        self.mode = mode
-        self.case_sensitive = case_sensitive
-
-    @staticmethod
-    def parse_keywords(text: str) -> list[str]:
-        for sep in (",", ";", "\n", "\t", " "):
-            text = text.replace(sep, ",")
-        seen: list[str] = []
-        for k in text.split(","):
-            k = k.strip()
-            if k and k not in seen:
-                seen.append(k)
-        return seen
-
-    def matched(self, line: str) -> list[str]:
-        hay = line if self.case_sensitive else line.lower()
-        hits: list[str] = []
-        for k in self.keywords:
-            needle = k if self.case_sensitive else k.lower()
-            if needle and needle in hay:
-                hits.append(k)
-        return hits
-
-    def visible(self, line: str) -> bool:
-        if not self.keywords:
-            return True
-        hit = bool(self.matched(line))
-        if self.mode == "include":
-            return hit
-        if self.mode == "exclude":
-            return not hit
-        return True
-
-    def highlight_enabled(self) -> bool:
-        return self.mode in ("highlight", "include", "split")
 
 
-class SerialMonitor:
-    """自包含串口封装（字节流）：连接 / 批量接收 / 发送。"""
-
-    def __init__(self):
-        self._serial = None
-        self._callback = None
-        self._thread: threading.Thread | None = None
-        self._stop = threading.Event()
-        self.rx_bytes = 0
-        self.last_error = ""
-
-    @staticmethod
-    def list_ports() -> list[tuple[str, str]]:
-        return [(p.device, p.description or p.device) for p in list_ports.comports()]
-
-    def connect(self, port: str, baudrate: int = 115200, bytesize: int = 8,
-                parity: str = "N", stopbits: float = 1, flow: str = "none") -> bool:
-        self.disconnect()
-        kwargs = dict(
-            bytesize=bytesize, parity=parity, stopbits=stopbits,
-            rtscts=(flow == "rtscts"), dsrdtr=(flow == "dsrdtr"),
-            xonxoff=(flow == "xonxoff"),
-        )
-        try:
-            self._serial = serial.Serial(port=port, baudrate=baudrate, timeout=0.1, **kwargs)
-        except Exception as exc:
-            self.last_error = str(exc)
-            return False
-        self.last_error = ""
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._receive_loop, daemon=True)
-        self._thread.start()
-        return True
-
-    def disconnect(self) -> None:
-        self._stop.set()
-        if self._serial is not None:
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-        self._serial = None
-
-    @property
-    def is_connected(self) -> bool:
-        return self._serial is not None and self._serial.is_open
-
-    def set_receive_callback(self, cb) -> None:
-        self._callback = cb
-
-    def send(self, data: bytes) -> bool:
-        if self._serial is None or not self._serial.is_open:
-            return False
-        try:
-            self._serial.write(data)
-            return True
-        except Exception:
-            return False
-
-    def _receive_loop(self) -> None:
-        buf = b""
-        while not self._stop.is_set():
-            try:
-                if self._serial is not None and self._serial.is_open:
-                    chunk = self._serial.read(_READ_CHUNK)
-                    if not chunk:
-                        continue
-                    self.rx_bytes += len(chunk)
-                    buf += chunk
-                    *lines, buf = buf.split(b"\n")
-                    if lines and self._callback is not None:
-                        cleaned = [l[:-1] if l.endswith(b"\r") else l for l in lines]
-                        self._callback(cleaned)  # list[bytes]
-            except Exception:
-                if self._stop.is_set():
-                    break
-                time.sleep(0.02)
 
 
-_PLOT_COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c"]
-
-
-class PlotRule:
-    """单条数值提取规则：正则(带捕获组)或关键词(取其后第一个数字)。"""
-
-    def __init__(self, name: str, pattern: str):
-        self.name = name
-        self.pattern = pattern
-        self._regex = None
-        try:
-            rx = re.compile(pattern)
-            if rx.groups >= 1:
-                self._regex = rx
-        except re.error:
-            self._regex = None
-
-    def match(self, text: str) -> float | None:
-        if self._regex is not None:
-            m = self._regex.search(text)
-            if not m:
-                return None
-            try:
-                return float(m.group(1))
-            except (ValueError, TypeError):
-                pass
-            nums = _extract_numbers(m.group(0))
-            return nums[0] if nums else None
-        if self.pattern:
-            idx = text.lower().find(self.pattern.lower())
-            if idx >= 0:
-                nums = _extract_numbers(text[idx + len(self.pattern):])
-                return nums[0] if nums else None
-        return None
-
-
-class PlotWidget(QWidget):
-    """实时折线图（pyqtgraph）：黑底 + 命名通道图例，横轴为时间（秒）。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._t0: float | None = None
-        self._curves: list = []
-        self._data: list[collections.deque] = []
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._pw = pg.PlotWidget()
-        self._pw.setBackground("#000000")
-        self._pw.showGrid(x=True, y=True, alpha=0.25)
-        self._pw.setLabel("bottom", "时间 (s)", color="#cccccc")
-        self._pw.setLabel("left", "数值", color="#cccccc")
-        for axis in ("bottom", "left"):
-            self._pw.getAxis(axis).setTextPen("#cccccc")
-            self._pw.getAxis(axis).setPen("#666666")
-        layout.addWidget(self._pw)
-        self.setMinimumHeight(200)
-        self.set_channels([])
-
-    def has_channels(self) -> bool:
-        return bool(self._curves)
-
-    def set_channels(self, names: list[str], show_legend: bool = True) -> None:
-        self._curves = []
-        self._data = []
-        self._pw.clear()
-        if show_legend:
-            legend = self._pw.addLegend()
-            legend.setLabelTextColor("#cccccc")
-        for i, name in enumerate(names):
-            color = _PLOT_COLORS[i % len(_PLOT_COLORS)]
-            curve = self._pw.plot([], [], pen=pg.mkPen(color, width=2),
-                                  name=(name if show_legend else None))
-            self._curves.append(curve)
-            self._data.append(collections.deque(maxlen=_PLOT_WINDOW))
-
-    def add_sample(self, row: list) -> None:
-        if self._t0 is None:
-            self._t0 = time.monotonic()
-        x = time.monotonic() - self._t0
-        for i, v in enumerate(row):
-            if v is not None and i < len(self._data):
-                self._data[i].append((x, float(v)))
-        for i, curve in enumerate(self._curves):
-            data = self._data[i]
-            if data:
-                curve.setData([p[0] for p in data], [p[1] for p in data])
-
-    def clear(self) -> None:
-        self._t0 = None
-        for data in self._data:
-            data.clear()
-        for curve in self._curves:
-            curve.setData([], [])
-
-
-def _fmt_val(v: float) -> str:
-    if v == int(v):
-        return str(int(v))
-    return f"{v:.4f}".rstrip("0").rstrip(".")
-
-
-class PlotWindow(QDialog):
-    """数值绘图独立窗口：黑底折线图 + 右侧提取结果分栏 + 串口来源选择。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("数值绘图")
-        self.resize(900, 560)
-        self._plot_rules: list[PlotRule] = []
-        self._plot_last: list[float | None] = []
-        self._sessions: list = []
-        self._build()
-        self._apply_rules()
-
-    def _build(self) -> None:
-        pp = QVBoxLayout(self)
-        pp.setContentsMargins(8, 8, 8, 8)
-        pp.setSpacing(4)
-
-        bar = QHBoxLayout()
-        bar.addWidget(QLabel("数值曲线"))
-        bar.addWidget(QLabel("串口:"))
-        self._source_combo = QComboBox()
-        bar.addWidget(self._source_combo)
-        bar.addWidget(self._btn("添加规则", self._add_rule))
-        bar.addWidget(self._btn("删除选中", self._del_rule))
-        bar.addWidget(self._btn("清空", self.clear_plot))
-        bar.addStretch(1)
-        pp.addLayout(bar)
-
-        splitter = QSplitter(Qt.Horizontal)
-
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-        self.plot_widget = PlotWidget()
-        lv.addWidget(self.plot_widget, 1)
-        hint = QLabel("规则：正则用 ( ) 圈出数值，如 temp=(\\d+\\.?\\d*)；"
-                      "普通关键词则取关键词之后的第一个数字。无规则时不绘图。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888888;")
-        lv.addWidget(hint)
-        self.rule_table = QTableWidget(0, 2)
-        self.rule_table.setHorizontalHeaderLabels(["通道名", "命中规则"])
-        self.rule_table.horizontalHeader().setStretchLastSection(True)
-        self.rule_table.itemChanged.connect(self._on_rule_changed)
-        lv.addWidget(self.rule_table, 1)
-        splitter.addWidget(left)
-
-        right = QWidget()
-        rv = QVBoxLayout(right)
-        rv.setContentsMargins(0, 0, 0, 0)
-        rv.setSpacing(4)
-        rv.addWidget(QLabel("提取结果"))
-        self.result_table = QTableWidget(0, 2)
-        self.result_table.setHorizontalHeaderLabels(["关键词", "数值"])
-        self.result_table.horizontalHeader().setStretchLastSection(True)
-        self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        rv.addWidget(self.result_table, 1)
-        splitter.addWidget(right)
-
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([620, 220])
-        pp.addWidget(splitter, 1)
-
-    def _btn(self, text: str, slot) -> QPushButton:
-        btn = QPushButton(text)
-        btn.clicked.connect(slot)
-        return btn
-
-    def set_sessions(self, sessions: list) -> None:
-        current = self._source_combo.currentData()
-        self._sessions = list(sessions)
-        self._source_combo.blockSignals(True)
-        self._source_combo.clear()
-        for s in self._sessions:
-            self._source_combo.addItem(s.title(), s)
-        if current in self._sessions:
-            self._source_combo.setCurrentIndex(self._sessions.index(current))
-        self._source_combo.blockSignals(False)
-
-    def feed_from_session(self, session, texts: list[str]) -> None:
-        if self._source_combo.currentData() is session:
-            self.feed_texts(texts)
-
-    # ---- 规则 ----
-    def _add_rule(self) -> None:
-        row = self.rule_table.rowCount()
-        self.rule_table.insertRow(row)
-        self.rule_table.setItem(row, 0, QTableWidgetItem(""))
-        self.rule_table.setItem(row, 1, QTableWidgetItem(""))
-
-    def _del_rule(self) -> None:
-        row = self.rule_table.currentRow()
-        if row >= 0:
-            self.rule_table.removeRow(row)
-            self._apply_rules()
-
-    def _on_rule_changed(self, _item) -> None:
-        self._apply_rules()
-
-    def _apply_rules(self) -> None:
-        rules: list[PlotRule] = []
-        for row in range(self.rule_table.rowCount()):
-            name_item = self.rule_table.item(row, 0)
-            rule_item = self.rule_table.item(row, 1)
-            name = (name_item.text() if name_item else "").strip()
-            pattern = (rule_item.text() if rule_item else "").strip()
-            if name or pattern:
-                rules.append(PlotRule(name or f"通道{len(rules) + 1}", pattern))
-        new_names = [r.name for r in rules]
-        old_names = [r.name for r in self._plot_rules]
-        self._plot_rules = rules
-        if new_names != old_names or not self.plot_widget.has_channels():
-            self._plot_last = [None] * len(rules)
-            self.plot_widget.set_channels(new_names, show_legend=bool(rules))
-            self.plot_widget.clear()
-        self._rebuild_result_table()
-
-    # ---- 数据接入 ----
-    def feed_texts(self, texts: list[str]) -> None:
-        if not texts or not self.isVisible() or not self._plot_rules:
-            return
-        rule_row: list[float | None] = [None] * len(self._plot_rules)
-        for text in texts:
-            for i, rule in enumerate(self._plot_rules):
-                v = rule.match(text)
-                if v is not None:
-                    rule_row[i] = v
-        for i in range(len(rule_row)):
-            if rule_row[i] is None:
-                rule_row[i] = self._plot_last[i]
-            else:
-                self._plot_last[i] = rule_row[i]
-        self.plot_widget.add_sample(rule_row)
-        self._update_values()
-
-    # ---- 提取结果分栏 ----
-    def _rebuild_result_table(self) -> None:
-        self.result_table.setRowCount(len(self._plot_rules))
-        for row, rule in enumerate(self._plot_rules):
-            self.result_table.setItem(row, 0, QTableWidgetItem(rule.pattern or rule.name))
-            last = self._plot_last[row] if row < len(self._plot_last) else None
-            self.result_table.setItem(row, 1, QTableWidgetItem("--" if last is None else _fmt_val(last)))
-
-    def _update_values(self) -> None:
-        for row, last in enumerate(self._plot_last):
-            item = self.result_table.item(row, 1)
-            if item is not None:
-                item.setText("--" if last is None else _fmt_val(last))
-
-    def clear_plot(self) -> None:
-        self.plot_widget.clear()
-        self._plot_last = [None] * len(self._plot_rules)
-        self._update_values()
 
 
 class CommandButton(QPushButton):
@@ -692,7 +224,7 @@ class SerialSession(QWidget):
         self._hex = False
         self._frozen = False
         self._filter_enabled = False
-        self._record_file = None
+        self._logmgr = LogManager()
         self._last_highlight = 0.0
         self._tx_bytes = 0
         self._rate: collections.deque = collections.deque()
@@ -723,9 +255,7 @@ class SerialSession(QWidget):
     def shutdown(self) -> None:
         self._flush_timer.stop()
         self._hotplug_timer.stop()
-        if self._record_file is not None:
-            self._record_file.close()
-            self._record_file = None
+        self._logmgr.close()
         self.serial.disconnect()
 
     # ---------- UI 构建 ----------
@@ -944,7 +474,7 @@ class SerialSession(QWidget):
                 self.serial.disconnect()
                 self.connect_btn.setText("打开串口")
                 self._sys(f"串口 {port} 已断开")
-                if self._record_file is not None:
+                if self._logmgr.is_open:
                     self._stop_record()
                 self.window.update_session_title(self)
             return
@@ -957,7 +487,7 @@ class SerialSession(QWidget):
             self.serial.disconnect()
             self.connect_btn.setText("打开串口")
             self._sys("已关闭串口")
-            if self._record_file is not None:
+            if self._logmgr.is_open:
                 self._stop_record()
             self.window.update_session_title(self)
         else:
@@ -981,7 +511,7 @@ class SerialSession(QWidget):
             if self.serial.connect(port, baud, **kwargs):
                 self.connect_btn.setText("关闭串口")
                 self._sys(f"已打开 {port} @ {baud}")
-                if self.window._auto_record and self._record_file is None:
+                if self.window._auto_record and not self._logmgr.is_open:
                     self._start_record()
                 self.window.update_session_title(self)
                 self.window._save_config()
@@ -1013,7 +543,6 @@ class SerialSession(QWidget):
             data = (text + nl).encode(self._encoding(), errors="replace")
         if self._do_send(data):
             self._add_send_history(text)
-            self.send_combo.setCurrentText("")
 
     def send_command_content(self, content: str) -> None:
         if not content:
@@ -1100,8 +629,8 @@ class SerialSession(QWidget):
         for ts, direction, payload in items:
             self._buffer.append((ts, direction, payload))
             text = self._payload_text(payload)
-            if self._record_file is not None:
-                self._record_file.write(self._record_line(ts, direction, payload) + "\n")
+            if self._logmgr.is_open:
+                self._logmgr.write(self._record_line(ts, direction, payload))
             if self._paused and direction != "sys":
                 continue  # 暂停只冻结显示（日志+绘图），后台仍缓冲/记录
             if self._filter.visible(text):
@@ -1120,10 +649,13 @@ class SerialSession(QWidget):
             self._suppress_scroll = False
         if rx_texts:
             self.window.plot_window.feed_from_session(self, rx_texts)
-        if self._record_file is not None:
-            self._record_file.flush()
-            if self._record_file.tell() >= self.window._shard_mb * 1024 * 1024:
-                self._rotate_record()
+        if self._logmgr.is_open:
+            self._logmgr.flush(self.window._shard_mb, self.window._log_dir())
+            if self._logmgr.error:
+                self._sys(f"记录写入失败：{self._logmgr.error}")
+                QMessageBox.warning(self, "记录失败", f"日志写入失败，已停止记录：\n{self._logmgr.error}")
+                self._logmgr.close()
+                self.record_btn.setText("开始记录")
         self._update_stats()
         if not self._frozen:
             self._scroll()
@@ -1458,41 +990,31 @@ class SerialSession(QWidget):
         menu.deleteLater()
 
     def toggle_record(self) -> None:
-        if self._record_file is not None:
+        if self._logmgr.is_open:
             self._stop_record()
         else:
             self._start_record()
 
     def _start_record(self) -> None:
-        if self._record_file is None:
+        if not self._logmgr.is_open:
             self._open_record_file()
-        if self._record_file is not None:
+        if self._logmgr.is_open:
             self.record_btn.setText("停止记录")
 
     def _stop_record(self) -> None:
-        if self._record_file is not None:
-            self._record_file.close()
-            self._record_file = None
+        if self._logmgr.is_open:
+            self._logmgr.close()
         self.record_btn.setText("开始记录")
         self._sys("已停止记录")
 
     def _open_record_file(self) -> None:
-        path = self.window._log_dir() / f"{self._log_basename()}.txt"
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self._record_file = open(path, "a", encoding="utf-8")
-        except OSError as exc:
-            self._record_file = None
-            self._sys(f"记录启动失败：{exc}")
-            QMessageBox.warning(self, "记录失败", f"无法创建日志文件：\n{path}\n\n{exc}")
-            return
-        self._sys(f"开始记录到: {path}")
-
-    def _rotate_record(self) -> None:
-        if self._record_file is not None:
-            self._record_file.close()
-        self._open_record_file()
-        self._sys("文件已达上限，已分片到新文件")
+        port = self.port_combo.currentData() or ""
+        path = self._logmgr.open(port, self.window._log_dir())
+        if path:
+            self._sys(f"开始记录到: {path}")
+        else:
+            self._sys(f"记录启动失败：{self._logmgr.error}")
+            QMessageBox.warning(self, "记录失败", f"无法创建日志文件：\n{self._logmgr.error}")
 
     def save_log(self) -> None:
         default = str(self.window._log_dir() / f"{self._log_basename()}.txt")
@@ -2164,22 +1686,7 @@ class SerialToolWindow(QMainWindow):
         self._clean_old_logs()
 
     def _clean_old_logs(self) -> None:
-        days = _LOG_RETENTION_DAYS.get(self._log_retention, 0)
-        if not days:
-            return
-        log_dir = self._log_dir()
-        if not log_dir.is_dir():
-            return
-        cutoff = time.time() - days * 86400
-        try:
-            for f in log_dir.glob("*.txt"):
-                try:
-                    if f.stat().st_mtime < cutoff:
-                        f.unlink()
-                except OSError:
-                    pass
-        except OSError:
-            pass
+        LogManager.clean_old_logs(self._log_dir(), self._log_retention)
 
     # ---------- 自动更新 ----------
     def _check_update(self) -> None:
