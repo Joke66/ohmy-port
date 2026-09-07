@@ -83,6 +83,55 @@ _LOG_THEME_COLORS = {
 # 已连接标签页文字颜色（绿点）
 _CONNECTED_COLOR = "#4caf50"
 
+# ============================================================
+# OhmyPort UI 精修覆盖层：追加在 qdarktheme 主题样式之后。
+# 只做尺寸 / 排版细节微调（圆角、内边距、最小高度、表头/菜单/提示行距），
+# 不写任何硬编码颜色 —— 颜色全部沿用 qdarktheme 主题（黑/护眼/白天）自身定义，
+# 因此三套主题下自动协调，也不会破坏背景皮肤 / 日志透明机制。
+# 注意：特异性与 qdarktheme 基础规则相同，本文件在其后生效即为覆盖意图；
+# 保留 qdarktheme 的 :hover/:pressed/:focus 状态规则不受影响。
+# ============================================================
+_UI_QSS = """
+QPushButton {
+    padding: 3px 14px;
+    border-radius: 6px;
+}
+QToolButton {
+    padding: 3px 8px;
+    border-radius: 6px;
+}
+QComboBox {
+    min-height: 24px;
+    padding: 1px 10px 1px 8px;
+    border-radius: 6px;
+}
+QComboBox::drop-down {
+    width: 20px;
+}
+QLineEdit, QAbstractSpinBox {
+    min-height: 22px;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+QTabBar::tab {
+    padding: 5px 10px;
+    min-width: 36px;
+}
+QMenu::item {
+    padding: 5px 20px;
+}
+QToolTip {
+    padding: 4px 9px;
+}
+QHeaderView::section {
+    padding: 4px 8px;
+    font-weight: 600;
+}
+QTableView::item, QTreeView::item, QListWidget::item {
+    padding: 4px 6px;
+}
+"""
+
 # 日志等宽字体选项
 _FONT_OPTIONS = [
     ("系统默认等宽", "default"),
@@ -2189,7 +2238,9 @@ class SerialToolWindow(QMainWindow):
         self._save_config()
 
     def _apply_theme_qss(self) -> None:
-        qdarktheme.setup_theme(**_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
+        cfg = dict(_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
+        cfg["additional_qss"] = _UI_QSS
+        qdarktheme.setup_theme(**cfg)
 
     def _muted_color(self) -> str:
         """返回当前主题下的次要文字色（统计/提示等弱化文字）。"""
