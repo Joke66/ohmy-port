@@ -3,7 +3,7 @@
 #
 #  产物：
 #    dist\OhmyPort.exe                    构建输出（未压缩）
-#    release\OhmyPort_v<版本>\            发布目录
+#    release\OhmyPort_v<版本>\            发布目录（保留历史版本，不会自动删除）
 #      ├─ OhmyPort.exe                    未压缩
 #      ├─ OhmyPort_v<版本>.zip            压缩包（含 exe + 使用说明）
 #      ├─ OhmyPort_Setup_v<版本>.exe      安装包（需安装 Inno Setup 6）
@@ -32,9 +32,9 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
-# [2/4] 清理旧产物
+# [2/4] 清理旧构建产物（保留 release 下历史版本，仅清理 build/dist）
 Write-Host "[2/4] 清理旧构建产物..." -ForegroundColor Cyan
-foreach ($d in @("build", "dist", "release")) {
+foreach ($d in @("build", "dist")) {
     if (Test-Path $d) { Remove-Item -Recurse -Force $d }
 }
 
