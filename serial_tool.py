@@ -727,6 +727,8 @@ class SerialSession(QWidget):
                 (self._dir_mark(direction) + self._display_body(payload), body_color)]
 
     def _append_colored_lines(self, widget: QPlainTextEdit, lines: list) -> None:
+        sb = widget.verticalScrollBar()
+        old = sb.value()
         cursor = widget.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         for segments in lines:
@@ -737,6 +739,7 @@ class SerialSession(QWidget):
                 cursor.insertText(text, fmt)
             cursor.insertBlock()
         widget.setTextCursor(cursor)
+        sb.setValue(old)  # 保持原滚动位置；自动滚动由 _scroll 显式处理
 
     def _record_line(self, ts: str, direction: str, payload) -> str:
         # 记录固定为文本形式，不受「HEX 显示」切换影响
@@ -1555,11 +1558,13 @@ class SerialToolWindow(QMainWindow):
                     lambda _=False, i=idx: self._edit_command(i),
                     lambda _=False, i=idx: self._delete_command(i),
                 )
-                btn.setFixedSize(120, 34)
+                btn.setFixedHeight(34)
+                btn.setMinimumWidth(100)
                 btn.setToolTip((cmd.get("name") or "") + "\n" + (cmd.get("content") or ""))
                 r, c = divmod(k, 4)
                 grid.addWidget(btn, r, c, Qt.AlignLeft | Qt.AlignTop)
                 k += 1
+            grid.setColumnStretch(4, 1)
             self.command_tabs.addTab(w, pname)
 
     def _commands_changed(self) -> None:
