@@ -75,3 +75,49 @@ def test_parse_version():
     assert st._parse_version("OhmyPort_v1.2.0") == (1, 2, 0)
     assert st._parse_version("v1.10.0") == (1, 10, 0)
     assert st._parse_version("no version") == ()
+
+
+# ---------- 配置导出/导入（命令页与命令） ----------
+def test_load_pages_commands_roundtrip():
+    data = {
+        "pages": ["第1页", "测控", "调试"],
+        "commands": [
+            {"name": "查询温度", "content": "AA 55 01", "cycle": True, "page": 1},
+            {"name": "重启", "content": "AA 55 02", "cycle": False, "page": 2},
+        ],
+    }
+    pages, cmds = st._load_pages_commands(data, ["第1页"])
+    assert pages == ["第1页", "测控", "调试"]
+    assert len(cmds) == 2
+    assert cmds[0]["name"] == "查询温度"
+    assert cmds[0]["content"] == "AA 55 01"
+    assert cmds[0]["cycle"] is True
+    assert cmds[0]["page"] == 1
+    assert cmds[1]["page"] == 2
+
+
+def test_load_pages_commands_invalid_page_fallback():
+    data = {
+        "pages": ["第1页"],
+        "commands": [{"name": "x", "content": "y", "page": 99}],
+    }
+    pages, cmds = st._load_pages_commands(data, ["第1页"])
+    assert pages == ["第1页"]
+    assert cmds[0]["page"] == 0  # 越界回退到第 1 页
+
+
+def test_load_pages_commands_missing_pages_kept():
+    data = {"commands": [{"name": "x", "content": "y", "page": 0}]}
+    pages, cmds = st._load_pages_commands(data, ["第1页"])
+    assert pages == ["第1页"]  # 无 pages 字段时保留默认页
+    assert cmds[0]["page"] == 0
+
+
+def test_load_pages_commands_skips_empty():
+    data = {
+        "pages": ["第1页"],
+        "commands": [{"name": "", "content": "", "page": 0}, {"name": "ok", "content": "1", "page": 0}],
+    }
+    _, cmds = st._load_pages_commands(data, ["第1页"])
+    assert len(cmds) == 1
+    assert cmds[0]["name"] == "ok"

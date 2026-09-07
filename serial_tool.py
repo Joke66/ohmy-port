@@ -63,19 +63,25 @@ _LOG_THEME_COLORS = {
         "ts": "#8a9199", "tx": "#4fc3f7", "sys": "#8a9199",
         "hl_bg": "#6d5c00", "hl_fg": "#ffffff",
         "search_bg": "#8a4d00", "search_bg_cur": "#a86100", "search_fg": "#ffffff",
+        "muted": "#9aa0a6",
     },
     "day": {
         "ts": "#6b7280", "tx": "#0e7490", "sys": "#6b7280",
         "hl_bg": "#fff59d", "hl_fg": "#000000",
         "search_bg": "#ffb74d", "search_bg_cur": "#ff9800", "search_fg": "#000000",
+        "muted": "#6b7280",
     },
     "eye": {
         "ts": "#5b6b5e", "tx": "#0e7490", "sys": "#5b6b5e",
         "hl_bg": "#fff59d", "hl_fg": "#000000",
         "search_bg": "#ffb74d", "search_bg_cur": "#ff9800", "search_fg": "#000000",
+        "muted": "#5b6b5e",
     },
 }
 
+
+# 已连接标签页文字颜色（绿点）
+_CONNECTED_COLOR = "#4caf50"
 
 # 日志等宽字体选项
 _FONT_OPTIONS = [
@@ -85,11 +91,64 @@ _FONT_OPTIONS = [
     ("JetBrains Mono", "JetBrains Mono"),
 ]
 
+# 高数据量渲染优化：按颜色缓存 QTextCharFormat，避免每段重复创建 QColor/格式对象
+_char_format_cache: dict[str, QTextCharFormat] = {}
+_default_char_format = QTextCharFormat()
+
+
+def _char_format(color: str | None) -> QTextCharFormat:
+    """返回（缓存的）字符格式；color 为 hex 字符串，None 表示默认前景色。"""
+    if color is None:
+        return _default_char_format
+    fmt = _char_format_cache.get(color)
+    if fmt is None:
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        _char_format_cache[color] = fmt
+    return fmt
+
+
+_hl_format_cache: dict[tuple[str, str], QTextCharFormat] = {}
+
+
+def _highlight_format(bg: str, fg: str) -> QTextCharFormat:
+    """返回（缓存的）关键词高亮格式（背景+前景）。"""
+    key = (bg, fg)
+    fmt = _hl_format_cache.get(key)
+    if fmt is None:
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor(bg))
+        fmt.setForeground(QColor(fg))
+        _hl_format_cache[key] = fmt
+    return fmt
+
 
 def _make_btn(text: str, slot) -> QPushButton:
     btn = QPushButton(text)
     btn.clicked.connect(slot)
     return btn
+
+
+def _load_pages_commands(data: dict, current_pages: list[str]) -> tuple[list[str], list[dict]]:
+    """从配置 dict 解析发送辅助的命令页与命令（导出/导入/启动共用，纯逻辑）。"""
+    pages = list(current_pages)
+    if isinstance(data.get("pages"), list) and data["pages"]:
+        pages = [str(p) for p in data["pages"]]
+    commands: list[dict] = []
+    cmds = data.get("commands")
+    if isinstance(cmds, list):
+        for c in cmds:
+            if isinstance(c, dict) and (c.get("name") or c.get("content")):
+                page = c.get("page")
+                if not isinstance(page, int) or page < 0 or page >= len(pages):
+                    page = 0  # 越界/非法页回退到第 1 页
+                commands.append({
+                    "name": str(c.get("name") or ""),
+                    "content": str(c.get("content") or ""),
+                    "cycle": bool(c.get("cycle")),
+                    "page": page,
+                })
+    return pages, commands
 
 
 class CommandButton(QPushButton):
@@ -267,6 +326,8 @@ class SerialSession(QWidget):
         self._search_reverse = True
         self._last_search_refresh = 0.0
         self._suppress_scroll = False
+        self._hl_regex = None
+        self._hl_regex_key = None
         self._build()
         self.serial.set_receive_callback(self._on_receive_batch)
         self._flush_timer = QTimer(self)
@@ -281,7 +342,7 @@ class SerialSession(QWidget):
 
     def title(self) -> str:
         if self.serial.is_connected:
-            return self.port_combo.currentData() or f"串口{self.index + 1}"
+            return f"● {self.port_combo.currentData() or f'串口{self.index + 1}'}"
         return f"串口{self.index + 1}"
 
     def shutdown(self) -> None:
@@ -302,7 +363,9 @@ class SerialSession(QWidget):
         self.port_combo = QComboBox()
         self.port_combo.setMinimumWidth(120)
         conn.addWidget(self.port_combo)
-        conn.addWidget(_make_btn("刷新", self.refresh_ports))
+        refresh_btn = _make_btn("刷新", self.refresh_ports)
+        refresh_btn.setToolTip("重新扫描可用串口")
+        conn.addWidget(refresh_btn)
         conn.addWidget(QLabel("波特率"))
         self.baud_combo = QComboBox()
         self.baud_combo.setEditable(True)
@@ -311,6 +374,7 @@ class SerialSession(QWidget):
         self.baud_combo.setMinimumWidth(90)
         conn.addWidget(self.baud_combo)
         self.connect_btn = _make_btn("打开串口", self.toggle_connection)
+        self.connect_btn.setToolTip("打开 / 关闭当前串口")
         conn.addWidget(self.connect_btn)
         conn.addStretch(1)
         layout.addLayout(conn)
@@ -443,18 +507,23 @@ class SerialSession(QWidget):
         # 底部操作行 + 统计
         bar = QHBoxLayout()
         self.pause_btn = _make_btn("暂停", self.toggle_pause)
+        self.pause_btn.setToolTip("暂停刷新显示（后台仍持续接收、记录、缓冲）")
         bar.addWidget(self.pause_btn)
-        bar.addWidget(_make_btn("清空", self.clear_log))
+        clear_btn = _make_btn("清空", self.clear_log)
+        clear_btn.setToolTip("清空显示与缓冲区（不影响已写入的日志文件）")
+        bar.addWidget(clear_btn)
         self.fixed_check = QCheckBox("固定显示")
         self.fixed_check.setChecked(False)
-        self.fixed_check.setToolTip("固定模式下不刷新显示，但后台持续接收、记录、缓冲")
+        self.fixed_check.setToolTip("固定显示：日志持续追加但保持当前滚动位置（不自动跟随到底部），"
+                                    "后台仍持续接收、记录、缓冲；向上滚动鼠标滚轮可快速进入")
         self.fixed_check.toggled.connect(self._on_fixed_toggle)
         bar.addWidget(self.fixed_check)
         self.record_btn = _make_btn("开始记录", self.toggle_record)
+        self.record_btn.setToolTip("手动开始 / 停止日志记录")
         bar.addWidget(self.record_btn)
         bar.addStretch(1)
         self.stat_label = QLabel("RX: 0 B  TX: 0 B")
-        self.stat_label.setStyleSheet("color: #888888;")
+        self.stat_label.setStyleSheet(f"color: {self.window._muted_color()};")
         bar.addWidget(self.stat_label)
         layout.addLayout(bar)
 
@@ -472,7 +541,9 @@ class SerialSession(QWidget):
         send.addWidget(self.newline_combo)
         self.hex_send_check = QCheckBox("HEX发送")
         send.addWidget(self.hex_send_check)
-        send.addWidget(_make_btn("发送", self.send_raw))
+        send_btn = _make_btn("发送", self.send_raw)
+        send_btn.setToolTip("发送当前输入内容")
+        send.addWidget(send_btn)
         layout.addLayout(send)
 
         # 自动应答（隐藏面板）
@@ -711,11 +782,30 @@ class SerialSession(QWidget):
     def _log_colors(self) -> dict:
         return _LOG_THEME_COLORS.get(self.window._theme, _LOG_THEME_COLORS["day"])
 
+    def _refresh_muted_style(self) -> None:
+        """主题切换后刷新统计栏等次要文字颜色。"""
+        self.stat_label.setStyleSheet(f"color: {self.window._muted_color()};")
+
     def _format_line(self, ts: str, direction: str, payload) -> str:
         return f"[{ts}] {self._dir_mark(direction)}{self._display_body(payload)}"
 
+    def _highlight_regex(self):
+        """返回（缓存的）关键词合并正则；关键词或大小写变化时自动重编译。"""
+        kws = self._filter.keywords
+        case = self._filter.case_sensitive
+        key = (tuple(kws), case)
+        if not kws:
+            self._hl_regex = None
+            self._hl_regex_key = key
+            return None
+        if self._hl_regex_key != key:
+            self._hl_regex = re.compile(
+                "|".join(re.escape(k) for k in kws), 0 if case else re.IGNORECASE)
+            self._hl_regex_key = key
+        return self._hl_regex
+
     def _format_segments(self, ts: str, direction: str, payload) -> list:
-        """把一行拆成 [(文本, 颜色hex或None)] 段；None 表示默认前景色。"""
+        """把一行拆成 [(文本, QTextCharFormat)] 段，关键词命中内联高亮。"""
         c = self._log_colors()
         if direction == "tx":
             body_color = c["tx"]
@@ -723,22 +813,45 @@ class SerialSession(QWidget):
             body_color = c["sys"]
         else:
             body_color = None
-        return [("[" + ts + "] ", c["ts"]),
-                (self._dir_mark(direction) + self._display_body(payload), body_color)]
+        ts_fmt = _char_format(c["ts"])
+        body_fmt = _char_format(body_color)
+        body = self._display_body(payload)
+        mark = self._dir_mark(direction)
+        segs = [("[" + ts + "] ", ts_fmt)]
+        if mark:
+            segs.append((mark, body_fmt))
+        # 内联关键词高亮：随数据插入时一次性着色，避免周期性全文档扫描 + 海量 ExtraSelection
+        if (not self._hex and self._filter.highlight_enabled()
+                and self._filter.keywords and body):
+            rx = self._highlight_regex()
+            if rx is not None:
+                hl_fmt = _highlight_format(c["hl_bg"], c["hl_fg"])
+                pos = 0
+                for m in rx.finditer(body):
+                    if m.start() > pos:
+                        segs.append((body[pos:m.start()], body_fmt))
+                    segs.append((m.group(0), hl_fmt))
+                    pos = m.end()
+                if pos < len(body):
+                    segs.append((body[pos:], body_fmt))
+                return segs
+        segs.append((body, body_fmt))
+        return segs
 
     def _append_colored_lines(self, widget: QPlainTextEdit, lines: list) -> None:
         sb = widget.verticalScrollBar()
         old = sb.value()
         cursor = widget.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        for segments in lines:
-            for text, color in segments:
-                fmt = QTextCharFormat()
-                if color is not None:
-                    fmt.setForeground(QColor(color))
-                cursor.insertText(text, fmt)
-            cursor.insertBlock()
-        widget.setTextCursor(cursor)
+        # 批量插入合并为单个编辑块，避免逐段触发文档布局/重绘（高数据量下显著提速）
+        cursor.beginEditBlock()
+        try:
+            for segments in lines:
+                for text, fmt in segments:
+                    cursor.insertText(text, fmt)
+                cursor.insertBlock()
+        finally:
+            cursor.endEditBlock()
         sb.setValue(old)  # 保持原滚动位置；自动滚动由 _scroll 显式处理
 
     def _record_line(self, ts: str, direction: str, payload) -> str:
@@ -997,6 +1110,7 @@ class SerialSession(QWidget):
 
     # ---------- 高亮 ----------
     def _maybe_highlight(self) -> None:
+        # 关键词高亮已内联到插入路径，这里仅负责查找(Ctrl+F)高亮的周期刷新
         now = time.monotonic()
         if now - self._last_highlight < _HL_INTERVAL:
             return
@@ -1004,27 +1118,6 @@ class SerialSession(QWidget):
         self._apply_highlight(self.log_text)
         if self._filter.mode == "split":
             self._apply_highlight(self.matched_text)
-
-    def _filter_selections(self, widget: QPlainTextEdit) -> list:
-        if self._hex or not self._filter.highlight_enabled() or not self._filter.keywords:
-            return []
-        c = self._log_colors()
-        fmt = QTextCharFormat()
-        fmt.setBackground(QColor(c["hl_bg"]))
-        fmt.setForeground(QColor(c["hl_fg"]))
-        flags = (QTextDocument.FindFlag.FindCaseSensitively
-                 if self._filter.case_sensitive else QTextDocument.FindFlag(0))
-        doc = widget.document()
-        selections: list = []
-        for kw in self._filter.keywords:
-            cursor = doc.find(kw, 0, flags)
-            while not cursor.isNull():
-                sel = QTextEdit.ExtraSelection()
-                sel.cursor = cursor
-                sel.format = fmt
-                selections.append(sel)
-                cursor = doc.find(kw, cursor.position(), flags)
-        return selections
 
     def _search_selections(self, widget: QPlainTextEdit) -> list:
         if widget is not self.log_text or not self._search_matches:
@@ -1045,7 +1138,7 @@ class SerialSession(QWidget):
         return selections
 
     def _apply_highlight(self, widget: QPlainTextEdit) -> None:
-        widget.setExtraSelections(self._filter_selections(widget) + self._search_selections(widget))
+        widget.setExtraSelections(self._search_selections(widget))
 
     # ---------- 过滤 ----------
     def toggle_filter(self) -> None:
@@ -1450,8 +1543,9 @@ class SerialToolWindow(QMainWindow):
             self._set_session_transparent(s, True)
         self._apply_font_to_session(s)
         self._apply_wrap_to_session(s)
-        idx = self.session_tabs.addTab(s, s.title())
-        self.session_tabs.setCurrentIndex(idx)
+        self.session_tabs.addTab(s, s.title())
+        self._apply_tab_indicator(s)
+        self.session_tabs.setCurrentIndex(self.session_tabs.count() - 1)
         self.plot_window.set_sessions(self._sessions)
         self._sync_menu_state()
 
@@ -1468,14 +1562,24 @@ class SerialToolWindow(QMainWindow):
         s.deleteLater()
         for i, sess in enumerate(self._sessions):
             sess.index = i
-            self.session_tabs.setTabText(i, sess.title())
+            self._apply_tab_indicator(sess)
         self.plot_window.set_sessions(self._sessions)
         self._sync_menu_state()
 
+    def _apply_tab_indicator(self, session: SerialSession) -> None:
+        """刷新标签页文字与连接状态颜色（已连接显示绿点）。"""
+        if session not in self._sessions:
+            return
+        idx = self._sessions.index(session)
+        self.session_tabs.setTabText(idx, session.title())
+        if session.serial.is_connected:
+            self.session_tabs.tabBar().setTabTextColor(idx, QColor(_CONNECTED_COLOR))
+        else:
+            self.session_tabs.tabBar().setTabTextColor(idx, QColor())
+
     def update_session_title(self, session: SerialSession) -> None:
         if session in self._sessions:
-            idx = self._sessions.index(session)
-            self.session_tabs.setTabText(idx, session.title())
+            self._apply_tab_indicator(session)
         self.plot_window.set_sessions(self._sessions)
 
     def _on_tab_changed(self, _idx: int) -> None:
@@ -1776,7 +1880,7 @@ class SerialToolWindow(QMainWindow):
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         form.addRow("等宽字体", combo)
         tip = QLabel("字体未安装时会自动回退到系统默认等宽字体。")
-        tip.setStyleSheet("color: #888888;")
+        tip.setStyleSheet(f"color: {self._muted_color()};")
         form.addRow("", tip)
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(dlg.accept)
@@ -1862,24 +1966,7 @@ class SerialToolWindow(QMainWindow):
                 "filter_enabled": bool(data.get("filter_enabled")),
                 "font_size": data.get("font_size"),
             }]
-        pages = data.get("pages")
-        if isinstance(pages, list) and pages:
-            self._pages = [str(p) for p in pages]
-        cmds = data.get("commands")
-        if isinstance(cmds, list):
-            loaded = []
-            for c in cmds:
-                if isinstance(c, dict) and (c.get("name") or c.get("content")):
-                    page = c.get("page")
-                    if not isinstance(page, int) or page < 0 or page >= len(self._pages):
-                        page = 0
-                    loaded.append({
-                        "name": str(c.get("name") or ""),
-                        "content": str(c.get("content") or ""),
-                        "cycle": bool(c.get("cycle")),
-                        "page": page,
-                    })
-            self._commands = loaded
+        self._pages, self._commands = _load_pages_commands(data, self._pages)
 
     def _config_data(self) -> dict:
         sessions = []
@@ -1946,7 +2033,7 @@ class SerialToolWindow(QMainWindow):
         form.addRow("保留时长", combo)
         tip = QLabel("到期自动清理旧日志文件（仅 .txt 日志）。「无限制」表示不清理。")
         tip.setWordWrap(True)
-        tip.setStyleSheet("color: #888888;")
+        tip.setStyleSheet(f"color: {self._muted_color()};")
         form.addRow("", tip)
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(dlg.accept)
@@ -2073,24 +2160,7 @@ class SerialToolWindow(QMainWindow):
             self._bg_enabled = data["bg_enabled"]
         self._apply_background()
         # 命令页 / 命令
-        pages = data.get("pages")
-        if isinstance(pages, list) and pages:
-            self._pages = [str(p) for p in pages]
-        cmds = data.get("commands")
-        if isinstance(cmds, list):
-            loaded = []
-            for c in cmds:
-                if isinstance(c, dict) and (c.get("name") or c.get("content")):
-                    page = c.get("page")
-                    if not isinstance(page, int) or page < 0 or page >= len(self._pages):
-                        page = 0
-                    loaded.append({
-                        "name": str(c.get("name") or ""),
-                        "content": str(c.get("content") or ""),
-                        "cycle": bool(c.get("cycle")),
-                        "page": page,
-                    })
-            self._commands = loaded
+        self._pages, self._commands = _load_pages_commands(data, self._pages)
         self._rebuild_command_tabs()
         # 会话
         sessions = data.get("sessions")
@@ -2114,10 +2184,16 @@ class SerialToolWindow(QMainWindow):
     def _set_theme(self, theme: str) -> None:
         self._theme = theme
         self._apply_theme_qss()
+        for s in self._sessions:
+            s._refresh_muted_style()
         self._save_config()
 
     def _apply_theme_qss(self) -> None:
         qdarktheme.setup_theme(**_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
+
+    def _muted_color(self) -> str:
+        """返回当前主题下的次要文字色（统计/提示等弱化文字）。"""
+        return _LOG_THEME_COLORS.get(self._theme, _LOG_THEME_COLORS["day"]).get("muted", "#888888")
 
     # ---------- 背景皮肤 ----------
     def _refresh_bg_combo(self, combo: QComboBox) -> None:
@@ -2150,7 +2226,7 @@ class SerialToolWindow(QMainWindow):
         hl.setContentsMargins(0, 0, 0, 0)
         hint = QLabel(f"背景图存放目录：{bg_dir}")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888888;")
+        hint.setStyleSheet(f"color: {self._muted_color()};")
         hl.addWidget(hint, 1)
         hl.addWidget(_make_btn("打开目录", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(bg_dir)))))
         hl.addWidget(_make_btn("刷新", lambda: self._refresh_bg_combo(combo)))
