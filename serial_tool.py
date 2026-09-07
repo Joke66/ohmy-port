@@ -33,7 +33,7 @@ import qdarktheme
 from PIL import Image, ImageFilter
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation,
-                           Qt, QTimer, QUrl, Signal)
+                           QSize, Qt, QTimer, QUrl, Signal)
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QFont,
                            QFontDatabase, QIcon, QKeySequence, QPainter, QPalette,
                            QPixmap, QShortcut, QTextCharFormat, QTextCursor, QTextDocument)
@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QSlider, QSpinBox, QSplitter, QStackedWidget, QSystemTrayIcon, QTabWidget,
-    QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QToolTip, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTextEdit, QToolBar, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from common import (
@@ -57,6 +57,7 @@ from serial_worker import SerialMonitor
 from plot_widget import PlotRule, PlotWindow, _fmt_val
 from log_manager import LogManager
 from frame_parser import FrameParser
+from icons import set_action_icon
 
 # 日志配色（随主题）：时间戳 / 发送 / 系统 / 高亮
 _LOG_THEME_COLORS = {
@@ -1577,27 +1578,48 @@ class SerialToolWindow(QMainWindow):
     def _build_menu(self) -> None:
         menubar = self.menuBar()
 
+        # 顶部工具栏：常用会话操作 + 视图开关（与菜单共享 QAction，状态自动同步）
+        self._toolbar = QToolBar("主工具栏", self)
+        self._toolbar.setObjectName("mainToolBar")
+        self._toolbar.setMovable(False)
+        self._toolbar.setIconSize(QSize(18, 18))
+        self._toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.addToolBar(self._toolbar)
+        self._icon_actions: list[tuple[object, str]] = []  # (QAction, 图标名)
+
+        def _ico(action, name: str) -> None:
+            """给动作配图标并登记，便于主题切换时换色。"""
+            self._icon_actions.append((action, name))
+
         # ---------- 文件 ----------
         file_menu = menubar.addMenu("文件")
         save_log_action = QAction("保存日志", self)
         save_log_action.setShortcut(QKeySequence("Ctrl+S"))
         save_log_action.triggered.connect(self._save_log_active)
         file_menu.addAction(save_log_action)
+        _ico(save_log_action, "save")
+        self._toolbar.addAction(save_log_action)
         open_log_dir_action = QAction("打开日志目录", self)
         open_log_dir_action.triggered.connect(self._open_log_dir)
         file_menu.addAction(open_log_dir_action)
+        _ico(open_log_dir_action, "folder")
+        self._toolbar.addAction(open_log_dir_action)
+        self._toolbar.addSeparator()
         file_menu.addSeparator()
         export_action = QAction("导出配置...", self)
         export_action.triggered.connect(self._export_config)
         file_menu.addAction(export_action)
+        _ico(export_action, "export")
         import_action = QAction("导入配置...", self)
         import_action.triggered.connect(self._import_config)
         file_menu.addAction(import_action)
+        _ico(import_action, "import")
         file_menu.addSeparator()
         quit_action = QAction("退出", self)
         quit_action.setShortcut(QKeySequence("Ctrl+Q"))
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
+        _ico(quit_action, "quit")
 
         # ---------- 视图 ----------
         view = menubar.addMenu("视图")
@@ -1605,31 +1627,46 @@ class SerialToolWindow(QMainWindow):
         self.params_action = QAction("串口参数", self, checkable=True)
         self.params_action.toggled.connect(self._toggle_active_params)
         view.addAction(self.params_action)
+        _ico(self.params_action, "sliders")
+        self._toolbar.addAction(self.params_action)
 
         self.send_assist_action = QAction("发送辅助", self, checkable=True)
         self.send_assist_action.toggled.connect(self._toggle_send_assist)
         view.addAction(self.send_assist_action)
+        _ico(self.send_assist_action, "send")
+        self._toolbar.addAction(self.send_assist_action)
 
         self.auto_reply_action = QAction("自动应答", self, checkable=True)
         self.auto_reply_action.toggled.connect(self._toggle_active_auto_reply)
         view.addAction(self.auto_reply_action)
+        _ico(self.auto_reply_action, "reply")
+        self._toolbar.addAction(self.auto_reply_action)
 
         self.protocol_action = QAction("协议解析", self, checkable=True)
         self.protocol_action.toggled.connect(self._toggle_active_protocol)
         view.addAction(self.protocol_action)
+        _ico(self.protocol_action, "hex")
+        self._toolbar.addAction(self.protocol_action)
 
         self.plot_action = QAction("数值绘图", self, checkable=True)
         self.plot_action.toggled.connect(self._toggle_plot_window)
         view.addAction(self.plot_action)
+        _ico(self.plot_action, "chart")
+        self._toolbar.addAction(self.plot_action)
 
         view.addSeparator()
+        self._toolbar.addSeparator()
         self.wrap_action = QAction("自动换行", self, checkable=True)
         self.wrap_action.setChecked(self._wrap_enabled)
         self.wrap_action.toggled.connect(self._toggle_wrap)
         view.addAction(self.wrap_action)
+        _ico(self.wrap_action, "wrap")
+        self._toolbar.addAction(self.wrap_action)
         ascii_hex_action = QAction("ASCII/HEX 转换...", self)
         ascii_hex_action.triggered.connect(self._open_ascii_hex_dialog)
         view.addAction(ascii_hex_action)
+        _ico(ascii_hex_action, "search")
+        self._toolbar.addAction(ascii_hex_action)
 
         # ---------- 设置 ----------
         settings_menu = menubar.addMenu("设置")
@@ -1645,10 +1682,12 @@ class SerialToolWindow(QMainWindow):
         bg_action = QAction("背景皮肤...", self)
         bg_action.triggered.connect(self._open_background_dialog)
         settings_menu.addAction(bg_action)
+        _ico(bg_action, "palette")
         settings_menu.addSeparator()
         font_action = QAction("字体...", self)
         font_action.triggered.connect(self._choose_font)
         settings_menu.addAction(font_action)
+        _ico(font_action, "font")
         zoom_in = QAction("字体增大", self)
         zoom_in.setShortcut(QKeySequence("Ctrl+="))
         zoom_in.triggered.connect(lambda: self._zoom_log(1))
@@ -1666,20 +1705,25 @@ class SerialToolWindow(QMainWindow):
         self.auto_record_action.setChecked(self._auto_record)
         self.auto_record_action.toggled.connect(self._set_auto_record)
         settings_menu.addAction(self.auto_record_action)
+        _ico(self.auto_record_action, "record")
         log_dir_action = QAction("日志保存目录...", self)
         log_dir_action.triggered.connect(self._choose_log_dir)
         settings_menu.addAction(log_dir_action)
+        _ico(log_dir_action, "folder")
         shard_action = QAction("日志分片大小...", self)
         shard_action.triggered.connect(self._set_shard_size)
         settings_menu.addAction(shard_action)
+        _ico(shard_action, "shard")
         retention_action = QAction("日志保留策略...", self)
         retention_action.triggered.connect(self._set_log_retention)
         settings_menu.addAction(retention_action)
+        _ico(retention_action, "retention")
         settings_menu.addSeparator()
         self.tray_action = QAction("关闭时最小化到托盘", self, checkable=True)
         self.tray_action.setChecked(self._close_behavior == "tray")
         self.tray_action.toggled.connect(self._set_close_behavior)
         settings_menu.addAction(self.tray_action)
+        _ico(self.tray_action, "tray")
         self.close_confirm_action = QAction("关闭时询问", self, checkable=True)
         self.close_confirm_action.setChecked(self._close_confirm)
         self.close_confirm_action.toggled.connect(self._set_close_confirm)
@@ -1690,13 +1734,16 @@ class SerialToolWindow(QMainWindow):
         docs_action = QAction("使用说明", self)
         docs_action.triggered.connect(self._open_docs)
         help_menu.addAction(docs_action)
+        _ico(docs_action, "question")
         check_update_action = QAction("检查更新", self)
         check_update_action.triggered.connect(self._check_update_manual)
         help_menu.addAction(check_update_action)
+        _ico(check_update_action, "update")
         help_menu.addSeparator()
         about = QAction("关于", self)
         about.triggered.connect(self._show_about)
         help_menu.addAction(about)
+        _ico(about, "info")
 
     # ---------- 会话管理 ----------
     def active_session(self) -> SerialSession | None:
@@ -2420,6 +2467,22 @@ class SerialToolWindow(QMainWindow):
         cfg = dict(_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
         cfg["additional_qss"] = _UI_QSS + _role_qss(self._theme)
         qdarktheme.setup_theme(**cfg)
+        self._refresh_icons()
+
+    def _icon_color(self) -> str:
+        """图标前景色：随主题自适应（QSS 无法引用，故用与 muted 近似的中性色）。"""
+        muted = self._muted_color()
+        # muted 在暗色下偏亮、浅色下偏暗，直接用即可保证可见性
+        return muted
+
+    def _refresh_icons(self) -> None:
+        """按当前主题重绘菜单 / 工具栏图标（颜色随主题切换）。"""
+        color = self._icon_color()
+        for action, name in getattr(self, "_icon_actions", []):
+            try:
+                set_action_icon(action, name, color)
+            except Exception:
+                pass
 
     def _muted_color(self) -> str:
         """返回当前主题下的次要文字色（统计/提示等弱化文字）。"""
