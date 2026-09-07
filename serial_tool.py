@@ -651,6 +651,7 @@ class SerialSession(QWidget):
         filt.addWidget(self.hex_view_check)
         self.filter_btn = _make_btn("应用", self.toggle_filter)
         filt.addWidget(self.filter_btn)
+        self.filter_panel.setVisible(False)
         layout.addWidget(self.filter_panel)
 
         # 查找栏（Ctrl+F 显示，Esc 关闭）
@@ -758,6 +759,7 @@ class SerialSession(QWidget):
         self.send_btn.setToolTip("发送当前输入内容")
         _set_role(self.send_btn, "primary")
         send.addWidget(self.send_btn)
+        self.send_panel.setVisible(False)
         layout.addWidget(self.send_panel)
 
         # 自动应答（隐藏面板）
@@ -1792,7 +1794,6 @@ class SerialToolWindow(QMainWindow):
         self.auto_record_action.setChecked(self._auto_record)
         self.auto_record_action.toggled.connect(self._set_auto_record)
         settings_menu.addAction(self.auto_record_action)
-        _ico(self.auto_record_action, "record")
         log_dir_action = QAction("日志保存目录...", self)
         log_dir_action.triggered.connect(self._choose_log_dir)
         settings_menu.addAction(log_dir_action)
@@ -1998,15 +1999,19 @@ class SerialToolWindow(QMainWindow):
             _start_fold(s.protocol_panel, checked)
 
     def _show_session_tab_menu(self, pos) -> None:
-        """右键串口标签页：可重新显示该会话的连接配置等。"""
+        """右键串口标签页：切换该会话连接配置的显示/隐藏。"""
         idx = self.session_tabs.tabBar().tabAt(pos)
         menu = QMenu(self)
-        show_conn = menu.addAction("显示连接配置")
+        toggle_conn = None
+        visible = False
+        if 0 <= idx < len(self._sessions):
+            visible = not self._sessions[idx].conn_panel.isHidden()
+            toggle_conn = menu.addAction("隐藏连接配置" if visible else "显示连接配置")
         close_tab = menu.addAction("关闭该串口会话")
         chosen = menu.exec(self.session_tabs.tabBar().mapToGlobal(pos))
-        if chosen is show_conn:
+        if chosen is toggle_conn and toggle_conn is not None:
             if 0 <= idx < len(self._sessions):
-                self._sessions[idx]._set_conn_visible(True)
+                self._sessions[idx]._set_conn_visible(not visible)
                 self.session_tabs.setCurrentIndex(idx)
         elif chosen is close_tab:
             if idx >= 0:
@@ -2965,6 +2970,13 @@ def _install_excepthook() -> None:
 
 
 def main() -> None:
+    # Windows 任务栏图标：设置 AppUserModelID，避免显示 Python 默认图标
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ShineZhang.OhmyPort")
+        except Exception:
+            pass
     app = QApplication(sys.argv)
     _install_excepthook()
     icon = QIcon(str(_resource_path("my-icon.ico")))
