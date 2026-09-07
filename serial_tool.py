@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QSlider, QSpinBox, QSplitter, QStackedWidget, QSystemTrayIcon, QTabWidget,
-    QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from common import (
@@ -439,6 +439,7 @@ class SerialSession(QWidget):
         self._frozen = False
         self._filter_enabled = False
         self._logmgr = LogManager()
+        self._stat_text = "RX: 0 B   TX: 0 B"
         self._last_highlight = 0.0
         self._tx_bytes = 0
         self._rate: collections.deque = collections.deque()
@@ -628,7 +629,7 @@ class SerialSession(QWidget):
         self.matched_panel.setVisible(False)
         layout.addWidget(self.matched_panel, 1)
 
-        # 底部操作行 + 统计
+        # 日志操作行（RX/TX 统计已上移至主窗口状态栏）
         bar = QHBoxLayout()
         self.pause_btn = _make_btn("暂停", self.toggle_pause)
         self.pause_btn.setToolTip("暂停刷新显示（后台仍持续接收、记录、缓冲）")
@@ -646,9 +647,6 @@ class SerialSession(QWidget):
         self.record_btn.setToolTip("手动开始 / 停止日志记录")
         bar.addWidget(self.record_btn)
         bar.addStretch(1)
-        self.stat_label = QLabel("RX: 0 B  TX: 0 B")
-        self.stat_label.setStyleSheet(f"color: {self.window._muted_color()};")
-        bar.addWidget(self.stat_label)
         layout.addLayout(bar)
 
         # 发送行
@@ -909,10 +907,6 @@ class SerialSession(QWidget):
 
     def _log_colors(self) -> dict:
         return _LOG_THEME_COLORS.get(self.window._theme, _LOG_THEME_COLORS["day"])
-
-    def _refresh_muted_style(self) -> None:
-        """主题切换后刷新统计栏等次要文字颜色。"""
-        self.stat_label.setStyleSheet(f"color: {self.window._muted_color()};")
 
     def _format_line(self, ts: str, direction: str, payload) -> str:
         return f"[{ts}] {self._dir_mark(direction)}{self._display_body(payload)}"
@@ -1231,11 +1225,12 @@ class SerialSession(QWidget):
             dt = now - t0
             rx_rate = (rx - rx0) / dt if dt > 0 else 0
             tx_rate = (self._tx_bytes - tx0) / dt if dt > 0 else 0
-            self.stat_label.setText(
+            self._stat_text = (
                 f"RX: {_fmt_bytes(rx)} ({_fmt_bytes(int(rx_rate))}/s)   "
                 f"TX: {_fmt_bytes(self._tx_bytes)} ({_fmt_bytes(int(tx_rate))}/s)")
         else:
-            self.stat_label.setText(f"RX: {_fmt_bytes(rx)}   TX: {_fmt_bytes(self._tx_bytes)}")
+            self._stat_text = f"RX: {_fmt_bytes(rx)}   TX: {_fmt_bytes(self._tx_bytes)}"
+        self.window._session_stats_updated(self)
 
     # ---------- 高亮 ----------
     def _maybe_highlight(self) -> None:
@@ -1487,15 +1482,18 @@ class SerialToolWindow(QMainWindow):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(4)
 
-        top = QHBoxLayout()
-        top.addWidget(_make_btn("＋ 添加串口", self._add_session))
-        top.addStretch(1)
-        layout.addLayout(top)
-
         self.session_tabs = QTabWidget()
         self.session_tabs.setTabsClosable(True)
         self.session_tabs.tabCloseRequested.connect(self._close_session)
         self.session_tabs.currentChanged.connect(self._on_tab_changed)
+        # 「＋ 新建串口」并入标签栏右上角，替代独立整行按钮
+        add_tab_btn = QToolButton(self.session_tabs)
+        add_tab_btn.setText("＋")
+        add_tab_btn.setToolTip("添加串口会话")
+        add_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_tab_btn.setFixedSize(26, 26)
+        add_tab_btn.clicked.connect(self._add_session)
+        self.session_tabs.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
         layout.addWidget(self.session_tabs, 1)
 
         # 发送辅助（全局，隐藏面板）
@@ -1517,6 +1515,15 @@ class SerialToolWindow(QMainWindow):
         self.send_assist_panel.setVisible(False)
         layout.addWidget(self.send_assist_panel)
         self._rebuild_command_tabs()
+
+        # 主窗口状态栏：常驻显示当前会话的连接状态与统计
+        self._status_label = QLabel("就绪")
+        self._status_label.setStyleSheet(f"color: {self._muted_color()};")
+        self._session_count_label = QLabel("")
+        self._session_count_label.setStyleSheet(f"color: {self._muted_color()};")
+        sb = self.statusBar()
+        sb.addWidget(self._status_label, 1)
+        sb.addPermanentWidget(self._session_count_label)
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -1685,6 +1692,7 @@ class SerialToolWindow(QMainWindow):
         self.session_tabs.setCurrentIndex(self.session_tabs.count() - 1)
         self.plot_window.set_sessions(self._sessions)
         self._sync_menu_state()
+        self._refresh_statusbar()
 
     def _close_session(self, idx: int) -> None:
         if self.session_tabs.count() <= 1:
@@ -1702,6 +1710,7 @@ class SerialToolWindow(QMainWindow):
             self._apply_tab_indicator(sess)
         self.plot_window.set_sessions(self._sessions)
         self._sync_menu_state()
+        self._refresh_statusbar()
 
     def _apply_tab_indicator(self, session: SerialSession) -> None:
         """刷新标签页文字与连接状态颜色（已连接显示绿点）。"""
@@ -1718,9 +1727,37 @@ class SerialToolWindow(QMainWindow):
         if session in self._sessions:
             self._apply_tab_indicator(session)
         self.plot_window.set_sessions(self._sessions)
+        self._refresh_statusbar()
 
     def _on_tab_changed(self, _idx: int) -> None:
         self._sync_menu_state()
+        self._refresh_statusbar()
+
+    def _refresh_statusbar(self) -> None:
+        """刷新主窗口状态栏：当前会话的连接状态 / 参数 / RX-TX 统计。"""
+        s = self.active_session()
+        if s is None:
+            self._status_label.setText("就绪")
+            self._session_count_label.setText("")
+            return
+        port = s.port_combo.currentData() or "未选端口"
+        baud = s.baud_combo.currentText()
+        enc = s.encoding_combo.currentText()
+        conn = "已连接" if s.serial.is_connected else "未连接"
+        self._status_label.setText(f"{port} @ {baud} · {enc} · {conn}    {s._stat_text}")
+        self._session_count_label.setText(f"{len(self._sessions)} 个会话")
+
+    def _session_stats_updated(self, session: SerialSession) -> None:
+        """会话统计更新回调：若为当前激活会话则刷新状态栏（高频，仅文本比较后更新）。"""
+        if session is not self.active_session():
+            return
+        port = session.port_combo.currentData() or "未选端口"
+        baud = session.baud_combo.currentText()
+        enc = session.encoding_combo.currentText()
+        conn = "已连接" if session.serial.is_connected else "未连接"
+        text = f"{port} @ {baud} · {enc} · {conn}    {session._stat_text}"
+        if self._status_label.text() != text:
+            self._status_label.setText(text)
 
     def _sync_menu_state(self) -> None:
         s = self.active_session()
@@ -2321,8 +2358,9 @@ class SerialToolWindow(QMainWindow):
     def _set_theme(self, theme: str) -> None:
         self._theme = theme
         self._apply_theme_qss()
-        for s in self._sessions:
-            s._refresh_muted_style()
+        muted = self._muted_color()
+        self._status_label.setStyleSheet(f"color: {muted};")
+        self._session_count_label.setStyleSheet(f"color: {muted};")
         self._save_config()
 
     def _apply_theme_qss(self) -> None:
