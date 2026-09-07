@@ -105,7 +105,7 @@ _LOG_RETENTION_DAYS = {k: d for _, k, d in _LOG_RETENTION_OPTIONS}
 
 
 _APP_NAME = "OhmyPort"
-_APP_VERSION = "1.3.0"
+_APP_VERSION = "1.3.1"
 _APP_AUTHOR = "ShineZhang"
 _APP_DATE = "2026-09-05"
 _APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
@@ -1510,7 +1510,7 @@ class SerialSession(QWidget):
 
 
 class SerialToolWindow(QMainWindow):
-    _update_ready = Signal(str, str)  # (tag, html_url)
+    _update_result = Signal(str, str, str)  # (status: update/none/error, tag, url)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1550,7 +1550,7 @@ class SerialToolWindow(QMainWindow):
                 self._apply_remembered_state(s, self._remembered_sessions[i])
         self._apply_background()
         self._clean_old_logs()
-        self._update_ready.connect(self._prompt_update)
+        self._update_result.connect(self._on_update_result)
         QTimer.singleShot(2500, self._check_update)
 
     # ---------- UI ----------
@@ -1595,6 +1595,30 @@ class SerialToolWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
+
+        # ---------- 文件 ----------
+        file_menu = menubar.addMenu("文件")
+        save_log_action = QAction("保存日志", self)
+        save_log_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_log_action.triggered.connect(self._save_log_active)
+        file_menu.addAction(save_log_action)
+        open_log_dir_action = QAction("打开日志目录", self)
+        open_log_dir_action.triggered.connect(self._open_log_dir)
+        file_menu.addAction(open_log_dir_action)
+        file_menu.addSeparator()
+        export_action = QAction("导出配置...", self)
+        export_action.triggered.connect(self._export_config)
+        file_menu.addAction(export_action)
+        import_action = QAction("导入配置...", self)
+        import_action.triggered.connect(self._import_config)
+        file_menu.addAction(import_action)
+        file_menu.addSeparator()
+        quit_action = QAction("退出", self)
+        quit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
+        # ---------- 视图 ----------
         view = menubar.addMenu("视图")
 
         self.params_action = QAction("串口参数", self, checkable=True)
@@ -1613,8 +1637,23 @@ class SerialToolWindow(QMainWindow):
         self.plot_action.toggled.connect(self._toggle_plot_window)
         view.addAction(self.plot_action)
 
+        zoom_in = QAction("字体增大", self)
+        zoom_in.setShortcut(QKeySequence("Ctrl+="))
+        zoom_in.triggered.connect(lambda: self._zoom_log(1))
+        zoom_out = QAction("字体减小", self)
+        zoom_out.setShortcut(QKeySequence("Ctrl+-"))
+        zoom_out.triggered.connect(lambda: self._zoom_log(-1))
+        zoom_reset = QAction("重置字体", self)
+        zoom_reset.setShortcut(QKeySequence("Ctrl+0"))
+        zoom_reset.triggered.connect(self._reset_font)
         view.addSeparator()
-        theme_menu = view.addMenu("主题")
+        view.addAction(zoom_in)
+        view.addAction(zoom_out)
+        view.addAction(zoom_reset)
+
+        # ---------- 设置 ----------
+        settings_menu = menubar.addMenu("设置")
+        theme_menu = settings_menu.addMenu("主题")
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
         for label, key in (("黑色", "black"), ("护眼", "eye"), ("白天", "day")):
@@ -1623,44 +1662,33 @@ class SerialToolWindow(QMainWindow):
             a.triggered.connect(lambda _=False, k=key: self._set_theme(k))
             theme_group.addAction(a)
             theme_menu.addAction(a)
-
-        zoom_in = QAction("字体增大", self)
-        zoom_in.triggered.connect(lambda: self._zoom_log(1))
-        zoom_out = QAction("字体减小", self)
-        zoom_out.triggered.connect(lambda: self._zoom_log(-1))
-        zoom_reset = QAction("重置字体", self)
-        zoom_reset.triggered.connect(self._reset_font)
-        view.addSeparator()
-        view.addAction(zoom_in)
-        view.addAction(zoom_out)
-        view.addAction(zoom_reset)
-
-        settings_menu = menubar.addMenu("设置")
-        log_dir_action = QAction("日志保存目录...", self)
-        log_dir_action.triggered.connect(self._choose_log_dir)
-        settings_menu.addAction(log_dir_action)
+        bg_action = QAction("背景皮肤...", self)
+        bg_action.triggered.connect(self._open_background_dialog)
+        settings_menu.addAction(bg_action)
+        settings_menu.addSeparator()
         self.auto_record_action = QAction("连接后自动保存日志", self, checkable=True)
         self.auto_record_action.setChecked(self._auto_record)
         self.auto_record_action.toggled.connect(self._set_auto_record)
         settings_menu.addAction(self.auto_record_action)
+        log_dir_action = QAction("日志保存目录...", self)
+        log_dir_action.triggered.connect(self._choose_log_dir)
+        settings_menu.addAction(log_dir_action)
         shard_action = QAction("日志分片大小...", self)
         shard_action.triggered.connect(self._set_shard_size)
         settings_menu.addAction(shard_action)
         retention_action = QAction("日志保留策略...", self)
         retention_action.triggered.connect(self._set_log_retention)
         settings_menu.addAction(retention_action)
-        bg_action = QAction("背景皮肤...", self)
-        bg_action.triggered.connect(self._open_background_dialog)
-        settings_menu.addAction(bg_action)
-        settings_menu.addSeparator()
-        export_action = QAction("导出配置...", self)
-        export_action.triggered.connect(self._export_config)
-        settings_menu.addAction(export_action)
-        import_action = QAction("导入配置...", self)
-        import_action.triggered.connect(self._import_config)
-        settings_menu.addAction(import_action)
 
+        # ---------- 帮助 ----------
         help_menu = menubar.addMenu("帮助")
+        docs_action = QAction("使用说明", self)
+        docs_action.triggered.connect(self._open_docs)
+        help_menu.addAction(docs_action)
+        check_update_action = QAction("检查更新", self)
+        check_update_action.triggered.connect(self._check_update_manual)
+        help_menu.addAction(check_update_action)
+        help_menu.addSeparator()
         about = QAction("关于", self)
         about.triggered.connect(self._show_about)
         help_menu.addAction(about)
@@ -2162,7 +2190,11 @@ class SerialToolWindow(QMainWindow):
         self._save_config()
         threading.Thread(target=self._do_check_update, daemon=True).start()
 
-    def _do_check_update(self) -> None:
+    def _check_update_manual(self) -> None:
+        self._active_sys("正在检查更新...")
+        threading.Thread(target=self._do_check_update, kwargs={"manual": True}, daemon=True).start()
+
+    def _do_check_update(self, manual: bool = False) -> None:
         try:
             import urllib.request
             req = urllib.request.Request(_UPDATE_API, headers={"User-Agent": _APP_NAME})
@@ -2173,9 +2205,20 @@ class SerialToolWindow(QMainWindow):
             current = _parse_version(_APP_VERSION)
             if latest and current and latest > current:
                 html_url = str(data.get("html_url") or _UPDATE_PAGE)
-                self._update_ready.emit(tag, html_url)
+                self._update_result.emit("update", tag, html_url)
+            elif manual:
+                self._update_result.emit("none", "", "")
         except Exception:
-            pass
+            if manual:
+                self._update_result.emit("error", "", "")
+
+    def _on_update_result(self, status: str, tag: str, url: str) -> None:
+        if status == "update":
+            self._prompt_update(tag, url)
+        elif status == "none":
+            QMessageBox.information(self, "检查更新", f"当前已是最新版本（{_APP_VERSION}）。")
+        else:
+            QMessageBox.warning(self, "检查更新", "检查更新失败，请稍后重试或检查网络。")
 
     def _prompt_update(self, tag: str, url: str) -> None:
         ret = QMessageBox.question(
@@ -2185,6 +2228,15 @@ class SerialToolWindow(QMainWindow):
         )
         if ret == QMessageBox.Yes:
             QDesktopServices.openUrl(QUrl(url))
+
+    # ---------- 文件菜单辅助 ----------
+    def _save_log_active(self) -> None:
+        s = self.active_session()
+        if s is not None:
+            s.save_log()
+
+    def _open_docs(self) -> None:
+        QDesktopServices.openUrl(QUrl(_APP_URL))
 
     # ---------- 配置导出 / 导入 ----------
     def _export_config(self) -> None:
