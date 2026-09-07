@@ -32,6 +32,11 @@ from pathlib import Path
 import qdarktheme
 from PIL import Image, ImageFilter
 
+try:  # darkdetect 随 qdarktheme 安装；缺失时"跟随系统"回退到手动判断一次
+    import darkdetect
+except Exception:  # pragma: no cover - 平台差异
+    darkdetect = None
+
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation,
                            QSize, Qt, QTimer, QUrl, Signal)
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices, QFont,
@@ -202,6 +207,17 @@ QPushButton[role="outline"] {{
 }}
 QPushButton[role="outline"]:hover {{ background-color: {_rgba(acc, 0.12)}; }}
 QPushButton[role="outline"]:pressed {{ background-color: {_rgba(acc, 0.24)}; }}
+QPushButton[role="dangerText"] {{
+    color: {dng};
+    background-color: transparent;
+    border: 1px solid {dng};
+    font-weight: 600;
+}}
+QPushButton[role="dangerText"]:hover {{ background-color: {_rgba(dng, 0.10)}; }}
+QPushButton[role="dangerText"]:pressed {{ background-color: {_rgba(dng, 0.22)}; }}
+QDialogButtonBox QPushButton, QMessageBox QPushButton {{
+    min-width: 84px;
+}}
 """
 
 
@@ -212,6 +228,20 @@ def _set_role(btn: QPushButton, role: str) -> None:
     st.unpolish(btn)
     st.polish(btn)
     btn.update()
+
+
+def _confirm_danger(parent, title: str, text: str, ok_text: str = "删除") -> bool:
+    """统一"破坏性操作"确认框：红色确认按钮 + 默认取消，降低误操作风险。"""
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setText(text)
+    ok_btn = box.addButton(ok_text, QMessageBox.ButtonRole.DestructiveRole)
+    cancel_btn = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+    _set_role(ok_btn, "dangerText")
+    box.setDefaultButton(cancel_btn)
+    box.exec()
+    return box.clickedButton() is ok_btn
 
 
 # 主窗口 / 会话页统一边距与间距（略增呼吸感，但保持工具类密度）
@@ -956,7 +986,7 @@ class SerialSession(QWidget):
         return str(payload)
 
     def _log_colors(self) -> dict:
-        return _LOG_THEME_COLORS.get(self.window._theme, _LOG_THEME_COLORS["day"])
+        return _LOG_THEME_COLORS.get(self.window._resolved_theme(), _LOG_THEME_COLORS["day"])
 
     def _format_line(self, ts: str, direction: str, payload) -> str:
         return f"[{ts}] {self._dir_mark(direction)}{self._display_body(payload)}"
@@ -1504,6 +1534,8 @@ class SerialToolWindow(QMainWindow):
         self._bg_enabled = False
         self._cycle_idx = 0
         self._wheel_filter = _WheelZoomFilter(self)
+        self._auto_theme_timer: QTimer | None = None
+        self._last_auto_theme: str | None = None
         self._load_config()
         self._build()
         self.plot_window = PlotWindow(self)
@@ -1522,6 +1554,7 @@ class SerialToolWindow(QMainWindow):
         self._clean_old_logs()
         self._update_result.connect(self._on_update_result)
         QTimer.singleShot(2500, self._check_update)
+        self._start_auto_theme_watch()
 
     # ---------- UI ----------
     def _build(self) -> None:
@@ -1673,7 +1706,8 @@ class SerialToolWindow(QMainWindow):
         theme_menu = settings_menu.addMenu("主题")
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
-        for label, key in (("黑色", "black"), ("护眼", "eye"), ("白天", "day")):
+        # auto：跟随系统深浅色；black=深色 / day=白天 / eye=护眼（浅绿）
+        for label, key in (("跟随系统", "auto"), ("深色", "black"), ("白天", "day"), ("护眼", "eye")):
             a = QAction(label, self, checkable=True)
             a.setChecked(self._theme == key)
             a.triggered.connect(lambda _=False, k=key: self._set_theme(k))
@@ -1978,7 +2012,7 @@ class SerialToolWindow(QMainWindow):
         msg = f"确定删除页「{self._pages[idx]}」吗？"
         if count:
             msg += f"\n该页有 {count} 条命令，将一并删除。"
-        if QMessageBox.question(self, "删除页", msg) != QMessageBox.Yes:
+        if not _confirm_danger(self, "删除页", msg):
             return
         del self._pages[idx]
         self._commands = [c for c in self._commands if c.get("page") != idx]
@@ -2068,8 +2102,8 @@ class SerialToolWindow(QMainWindow):
 
     def _delete_command(self, idx: int) -> None:
         cmd = self._commands[idx]
-        if QMessageBox.question(self, "删除命令",
-                                f"确定删除命令「{cmd.get('name')}」吗？") != QMessageBox.Yes:
+        if not _confirm_danger(self, "删除命令",
+                               f"确定删除命令「{cmd.get('name')}」吗？"):
             return
         del self._commands[idx]
         self._commands_changed()
@@ -2198,7 +2232,7 @@ class SerialToolWindow(QMainWindow):
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return
-        if isinstance(data.get("theme"), str) and data["theme"] in ("black", "eye", "day"):
+        if isinstance(data.get("theme"), str) and data["theme"] in ("auto", "black", "eye", "day"):
             self._theme = data["theme"]
         if isinstance(data.get("auto_record"), bool):
             self._auto_record = data["auto_record"]
@@ -2406,7 +2440,7 @@ class SerialToolWindow(QMainWindow):
             QMessageBox.warning(self, "导入失败", "配置文件格式无效")
             return
         # 全局设置
-        if isinstance(data.get("theme"), str) and data["theme"] in ("black", "eye", "day"):
+        if isinstance(data.get("theme"), str) and data["theme"] in ("auto", "black", "eye", "day"):
             self._theme = data["theme"]
             self._apply_theme_qss()
         if isinstance(data.get("auto_record"), bool):
@@ -2455,19 +2489,56 @@ class SerialToolWindow(QMainWindow):
         self._active_sys(f"配置已导入: {path}")
 
     # ---------- 主题 ----------
+    def _resolved_theme(self) -> str:
+        """auto → 按系统深浅解析为 black/day；否则原样。"""
+        if self._theme != "auto":
+            return self._theme
+        if darkdetect is not None:
+            try:
+                return "black" if darkdetect.isDark() else "day"
+            except Exception:
+                pass
+        return "day"
+
     def _set_theme(self, theme: str) -> None:
         self._theme = theme
         self._apply_theme_qss()
-        muted = self._muted_color()
-        self._status_label.setStyleSheet(f"color: {muted};")
-        self._session_count_label.setStyleSheet(f"color: {muted};")
+        self._refresh_muted_labels()
+        self._last_auto_theme = self._resolved_theme()
         self._save_config()
 
     def _apply_theme_qss(self) -> None:
-        cfg = dict(_THEME_CFG.get(self._theme, _THEME_CFG["day"]))
-        cfg["additional_qss"] = _UI_QSS + _role_qss(self._theme)
+        resolved = self._resolved_theme()
+        cfg = dict(_THEME_CFG.get(resolved, _THEME_CFG["day"]))
+        cfg["additional_qss"] = _UI_QSS + _role_qss(resolved)
         qdarktheme.setup_theme(**cfg)
         self._refresh_icons()
+
+    def _refresh_muted_labels(self) -> None:
+        """主题 / 系统深浅切换后刷新状态栏等次要文字颜色。"""
+        muted = self._muted_color()
+        self._status_label.setStyleSheet(f"color: {muted};")
+        self._session_count_label.setStyleSheet(f"color: {muted};")
+
+    def _start_auto_theme_watch(self) -> None:
+        """auto 模式轮询系统深浅色：变化时重设实际主题（保存仍为 auto）。"""
+        self._last_auto_theme = self._resolved_theme()
+        if darkdetect is None or self._auto_theme_timer is not None:
+            return
+        timer = QTimer(self)
+        timer.setInterval(2000)
+        timer.timeout.connect(self._poll_auto_theme)
+        timer.start()
+        self._auto_theme_timer = timer
+
+    def _poll_auto_theme(self) -> None:
+        if self._theme != "auto":
+            return
+        cur = self._resolved_theme()
+        if cur != self._last_auto_theme:
+            self._last_auto_theme = cur
+            self._apply_theme_qss()
+            self._refresh_muted_labels()
 
     def _icon_color(self) -> str:
         """图标前景色：随主题自适应（QSS 无法引用，故用与 muted 近似的中性色）。"""
@@ -2486,7 +2557,8 @@ class SerialToolWindow(QMainWindow):
 
     def _muted_color(self) -> str:
         """返回当前主题下的次要文字色（统计/提示等弱化文字）。"""
-        return _LOG_THEME_COLORS.get(self._theme, _LOG_THEME_COLORS["day"]).get("muted", "#888888")
+        resolved = self._resolved_theme()
+        return _LOG_THEME_COLORS.get(resolved, _LOG_THEME_COLORS["day"]).get("muted", "#888888")
 
     # ---------- 背景皮肤 ----------
     def _refresh_bg_combo(self, combo: QComboBox) -> None:
@@ -2805,3 +2877,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
