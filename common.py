@@ -62,7 +62,7 @@ _LOG_RETENTION_KEYS = [k for _, k, _ in _LOG_RETENTION_OPTIONS]
 _LOG_RETENTION_DAYS = {k: d for _, k, d in _LOG_RETENTION_OPTIONS}
 
 _APP_NAME = "OhmyPort"
-_APP_VERSION = "1.5.1"
+_APP_VERSION = "1.5.2"
 _APP_AUTHOR = "ShineZhang"
 _APP_DATE = "2026-09-07"
 _APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"

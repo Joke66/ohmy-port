@@ -1218,7 +1218,7 @@ class SerialToolWindow(QMainWindow):
         self._shard_mb = 5
         self._log_retention = "month"
         self._last_update_check = ""
-        self._font_family = "default"
+        self._font_family = "Consolas"
         self._wrap_enabled = True
         self._close_behavior = "exit"
         self._close_confirm = True
@@ -1735,10 +1735,13 @@ class SerialToolWindow(QMainWindow):
             self._save_config()
 
     def _make_log_font(self, point_size: int) -> QFont:
-        if self._font_family in ("", "default"):
+        family = self._font_family
+        if family not in ("", "default") and family not in QFontDatabase.families():
+            family = "default"  # 未安装则回退到系统默认等宽
+        if family in ("", "default"):
             f = QFontDatabase.systemFont(QFontDatabase.FixedFont)
         else:
-            f = QFont(self._font_family)
+            f = QFont(family)
         f.setPointSize(max(1, point_size))
         return f
 
@@ -2101,6 +2104,9 @@ class SerialToolWindow(QMainWindow):
             for i, s in enumerate(self._sessions):
                 if i < len(self._remembered_sessions):
                     self._apply_remembered_state(s, self._remembered_sessions[i])
+        for s in self._sessions:
+            self._apply_font_to_session(s)
+            self._apply_wrap_to_session(s)
         self._save_config()
         self._active_sys(f"配置已导入: {path}")
 
