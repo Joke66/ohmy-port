@@ -1,0 +1,23 @@
+version: '1.0'
+name: master-pipeline
+displayName: CI
+stages:
+  - stage:
+      name: test
+      displayName: 测试
+      steps:
+        - step: build@python
+          name: pytest
+          displayName: pytest 单元测试
+          # Gitee Go 的 python 插件支持 2.7 / 3.6~3.9
+          # 若 PySide6 6.11 在 3.9 下无法安装，可降低 PySide6 版本或改用 shell 步骤 + 更高版本 Python 镜像
+          pythonVersion: '3.9'
+          commands:
+            - python3 --version
+            - python3 -m pip install -r requirements.txt --ignore-requires-python
+            - python3 -m pytest tests/ -q
+triggers:
+  push:
+    branches:
+      include:
+        - master

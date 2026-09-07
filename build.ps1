@@ -6,6 +6,7 @@
 #    release\OhmyPort_v<版本>\            发布目录
 #      ├─ OhmyPort.exe                    未压缩
 #      ├─ OhmyPort_v<版本>.zip            压缩包（含 exe + 使用说明）
+#      ├─ OhmyPort_Setup_v<版本>.exe      安装包（需安装 Inno Setup 6）
 #      └─ 使用说明.md
 #
 #  用法：
@@ -16,7 +17,7 @@ $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
 $AppName = "OhmyPort"
-$Version = "1.2.0"   # 与 serial_tool.py 中 _APP_VERSION 保持一致
+$Version = "1.3.0"   # 与 serial_tool.py 中 _APP_VERSION 保持一致
 
 # [1/4] 检查 PyInstaller
 Write-Host "[1/4] 检查 PyInstaller..." -ForegroundColor Cyan
@@ -74,6 +75,24 @@ Copy-Item (Join-Path $PSScriptRoot "dist\${AppName}.exe") (Join-Path $stage "${A
 Copy-Item (Join-Path $PSScriptRoot "README.md") (Join-Path $stage "使用说明.md") -Force
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath (Join-Path $releaseDir "${AppName}_v${Version}.zip") -Force
 Remove-Item $stage -Recurse -Force
+
+# [5/5] 可选：用 Inno Setup 生成安装包
+Write-Host "[5/5] 生成安装包（可选）..." -ForegroundColor Cyan
+$iscc = @(
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($iscc) {
+    & $iscc /DMyAppVersion=$Version "installer.iss"
+    if ($LASTEXITCODE -eq 0) {
+        Copy-Item (Join-Path $PSScriptRoot "Output\OhmyPort_Setup_v$Version.exe") (Join-Path $releaseDir "OhmyPort_Setup_v$Version.exe") -Force
+        Write-Host "  安装包已生成：OhmyPort_Setup_v$Version.exe" -ForegroundColor Green
+    } else {
+        Write-Host "  安装包编译失败！" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  未检测到 Inno Setup 6，跳过安装包生成（仅绿色版）" -ForegroundColor Yellow
+}
 
 Write-Host ""
 Write-Host "打包完成！发布目录：$releaseDir" -ForegroundColor Green

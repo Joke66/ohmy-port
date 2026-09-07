@@ -1,5 +1,7 @@
-pyserial>=3.5
-PySide6>=6.5
-pyqtgraph>=0.13
-pyqtdarktheme>=2.0
-Pillow>=9.0
+# 锁定的依赖版本（构建可复现）
+# 注意：pyqtdarktheme 2.1.0 声明 Python <3.12，在更高版本 Python 上安装需加 --ignore-requires-python
+pyserial==3.5
+PySide6==6.11.2
+pyqtgraph==0.14.0
+pyqtdarktheme==2.1.0
+Pillow==12.3.0

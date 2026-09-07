@@ -21,6 +21,7 @@ import collections
 import datetime
 import hashlib
 import json
+import os
 import queue
 import re
 import sys
@@ -35,7 +36,7 @@ import pyqtgraph as pg
 import qdarktheme
 from PIL import Image, ImageFilter
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPalette, QPixmap, QShortcut, QTextCharFormat, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
@@ -61,11 +62,63 @@ _HL_INTERVAL = 0.5
 _HOTPLUG_MS = 2000
 _PLOT_WINDOW = 600
 
+_DATA_DIR: Path | None = None
+
+
+def _exe_dir() -> Path:
+    """exe 或脚本所在目录。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _data_dir() -> Path:
+    """可写数据目录：优先 exe 同级，不可写则落到 %APPDATA%\\OhmyPort。"""
+    global _DATA_DIR
+    if _DATA_DIR is None:
+        base = _exe_dir()
+        probe = base / ".ohmyport_probe"
+        try:
+            probe.write_text("", encoding="utf-8")
+            probe.unlink()
+            _DATA_DIR = base
+        except OSError:
+            appdata = Path(os.environ.get("APPDATA") or str(Path.home())) / "OhmyPort"
+            try:
+                appdata.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                appdata = base
+            _DATA_DIR = appdata
+    return _DATA_DIR
+
+
+# 日志保留策略：显示名 / 配置键 / 保留天数（0 表示无限制）
+_LOG_RETENTION_OPTIONS = [
+    ("一周", "week", 7),
+    ("一个月", "month", 30),
+    ("半年", "half_year", 180),
+    ("一年", "year", 365),
+    ("无限制", "unlimited", 0),
+]
+_LOG_RETENTION_KEYS = [k for _, k, _ in _LOG_RETENTION_OPTIONS]
+_LOG_RETENTION_DAYS = {k: d for _, k, d in _LOG_RETENTION_OPTIONS}
+
+
 _APP_NAME = "OhmyPort"
-_APP_VERSION = "1.2.0"
+_APP_VERSION = "1.3.0"
 _APP_AUTHOR = "ShineZhang"
 _APP_DATE = "2026-09-05"
 _APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
+_UPDATE_API = "https://gitee.com/api/v5/repos/Shine_Zhang/ohmy-port/releases/latest"
+_UPDATE_PAGE = "https://gitee.com/Shine_Zhang/ohmy-port/releases"
+
+
+def _parse_version(text: str) -> tuple:
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", text or "")
+    if not m:
+        return ()
+    return tuple(int(x) for x in m.groups())
+
 
 _THEME_CFG = {
     "black": {"theme": "dark"},
@@ -158,6 +211,7 @@ class SerialMonitor:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self.rx_bytes = 0
+        self.last_error = ""
 
     @staticmethod
     def list_ports() -> list[tuple[str, str]]:
@@ -173,8 +227,10 @@ class SerialMonitor:
         )
         try:
             self._serial = serial.Serial(port=port, baudrate=baudrate, timeout=0.1, **kwargs)
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             return False
+        self.last_error = ""
         self._stop.clear()
         self._thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._thread.start()
@@ -930,8 +986,13 @@ class SerialSession(QWidget):
                 self.window.update_session_title(self)
                 self.window._save_config()
             else:
-                self._sys(f"打开 {port} 失败")
-                QMessageBox.warning(self, "串口连接", f"串口 {port} 连接失败")
+                reason = self.serial.last_error or "未知错误"
+                self._sys(f"打开 {port} 失败：{reason}")
+                QMessageBox.warning(
+                    self, "串口连接",
+                    f"串口 {port} 打开失败：\n{reason}\n\n"
+                    "常见原因：端口不存在 / 被其它软件占用 / 无访问权限。",
+                )
 
     def _on_receive_batch(self, lines: list[bytes]) -> None:
         for line in lines:
@@ -1405,7 +1466,8 @@ class SerialSession(QWidget):
     def _start_record(self) -> None:
         if self._record_file is None:
             self._open_record_file()
-        self.record_btn.setText("停止记录")
+        if self._record_file is not None:
+            self.record_btn.setText("停止记录")
 
     def _stop_record(self) -> None:
         if self._record_file is not None:
@@ -1416,8 +1478,14 @@ class SerialSession(QWidget):
 
     def _open_record_file(self) -> None:
         path = self.window._log_dir() / f"{self._log_basename()}.txt"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._record_file = open(path, "a", encoding="utf-8")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._record_file = open(path, "a", encoding="utf-8")
+        except OSError as exc:
+            self._record_file = None
+            self._sys(f"记录启动失败：{exc}")
+            QMessageBox.warning(self, "记录失败", f"无法创建日志文件：\n{path}\n\n{exc}")
+            return
         self._sys(f"开始记录到: {path}")
 
     def _rotate_record(self) -> None:
@@ -1442,6 +1510,8 @@ class SerialSession(QWidget):
 
 
 class SerialToolWindow(QMainWindow):
+    _update_ready = Signal(str, str)  # (tag, html_url)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"{_APP_NAME} v{_APP_VERSION}")
@@ -1457,7 +1527,9 @@ class SerialToolWindow(QMainWindow):
         self._log_dir_override: str | None = None
         self._auto_record = True
         self._shard_mb = 5
-        self._bg_dir = str(Path(__file__).resolve().parent / "background")
+        self._log_retention = "month"
+        self._last_update_check = ""
+        self._bg_dir = str(_data_dir() / "background")
         self._bg_image = ""
         self._bg_blur = 10
         self._bg_enabled = False
@@ -1477,6 +1549,9 @@ class SerialToolWindow(QMainWindow):
             if i < len(self._remembered_sessions):
                 self._apply_remembered_state(s, self._remembered_sessions[i])
         self._apply_background()
+        self._clean_old_logs()
+        self._update_ready.connect(self._prompt_update)
+        QTimer.singleShot(2500, self._check_update)
 
     # ---------- UI ----------
     def _build(self) -> None:
@@ -1571,9 +1646,19 @@ class SerialToolWindow(QMainWindow):
         shard_action = QAction("日志分片大小...", self)
         shard_action.triggered.connect(self._set_shard_size)
         settings_menu.addAction(shard_action)
+        retention_action = QAction("日志保留策略...", self)
+        retention_action.triggered.connect(self._set_log_retention)
+        settings_menu.addAction(retention_action)
         bg_action = QAction("背景皮肤...", self)
         bg_action.triggered.connect(self._open_background_dialog)
         settings_menu.addAction(bg_action)
+        settings_menu.addSeparator()
+        export_action = QAction("导出配置...", self)
+        export_action.triggered.connect(self._export_config)
+        settings_menu.addAction(export_action)
+        import_action = QAction("导入配置...", self)
+        import_action.triggered.connect(self._import_config)
+        settings_menu.addAction(import_action)
 
         help_menu = menubar.addMenu("帮助")
         about = QAction("关于", self)
@@ -1894,16 +1979,10 @@ class SerialToolWindow(QMainWindow):
             self._save_config()
 
     # ---------- 保存 / 目录 ----------
-    @staticmethod
-    def _base_dir() -> Path:
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parent
-
     def _log_dir(self) -> Path:
         if self._log_dir_override:
             return Path(self._log_dir_override)
-        return self._base_dir() / "Logs"
+        return _data_dir() / "Logs"
 
     def _choose_log_dir(self) -> None:
         start = self._log_dir()
@@ -1920,7 +1999,7 @@ class SerialToolWindow(QMainWindow):
 
     # ---------- 配置 ----------
     def _config_path(self) -> Path:
-        return self._base_dir() / "serial_tool_config.json"
+        return _data_dir() / "serial_tool_config.json"
 
     def _load_config(self) -> None:
         path = self._config_path()
@@ -1936,6 +2015,10 @@ class SerialToolWindow(QMainWindow):
             self._auto_record = data["auto_record"]
         if isinstance(data.get("shard_mb"), int):
             self._shard_mb = max(1, data["shard_mb"])
+        if isinstance(data.get("log_retention"), str) and data["log_retention"] in _LOG_RETENTION_KEYS:
+            self._log_retention = data["log_retention"]
+        if isinstance(data.get("last_update_check"), str):
+            self._last_update_check = data["last_update_check"]
         if isinstance(data.get("log_dir"), str) and data["log_dir"]:
             self._log_dir_override = data["log_dir"]
         if isinstance(data.get("bg_dir"), str) and data["bg_dir"]:
@@ -1979,7 +2062,7 @@ class SerialToolWindow(QMainWindow):
                     })
             self._commands = loaded
 
-    def _save_config(self) -> None:
+    def _config_data(self) -> dict:
         sessions = []
         for s in self._sessions:
             fs = s.log_text.font().pointSize()
@@ -1992,12 +2075,14 @@ class SerialToolWindow(QMainWindow):
                 "filter_enabled": s._filter_enabled,
                 "font_size": fs if fs > 0 else 10,
             })
-        data = {
+        return {
             "theme": self._theme,
             "pages": self._pages,
             "commands": self._commands,
             "auto_record": self._auto_record,
             "shard_mb": self._shard_mb,
+            "log_retention": self._log_retention,
+            "last_update_check": self._last_update_check,
             "log_dir": self._log_dir_override,
             "bg_dir": self._bg_dir,
             "bg_image": self._bg_image,
@@ -2005,9 +2090,11 @@ class SerialToolWindow(QMainWindow):
             "bg_enabled": self._bg_enabled,
             "sessions": sessions,
         }
+
+    def _save_config(self) -> None:
         try:
             self._config_path().write_text(
-                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                json.dumps(self._config_data(), ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:
             pass
 
@@ -2022,6 +2109,163 @@ class SerialToolWindow(QMainWindow):
             self._shard_mb = value
             self._save_config()
             self._active_sys(f"日志分片大小已设为 {value} MB")
+
+    # ---------- 日志保留 ----------
+    def _set_log_retention(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("日志保留策略")
+        form = QFormLayout(dlg)
+        combo = QComboBox()
+        for label, key, _days in _LOG_RETENTION_OPTIONS:
+            combo.addItem(label, key)
+        idx = combo.findData(self._log_retention)
+        combo.setCurrentIndex(idx if idx >= 0 else 1)
+        form.addRow("保留时长", combo)
+        tip = QLabel("到期自动清理旧日志文件（仅 .txt 日志）。「无限制」表示不清理。")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color: #888888;")
+        form.addRow("", tip)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._log_retention = combo.currentData()
+        self._save_config()
+        self._clean_old_logs()
+
+    def _clean_old_logs(self) -> None:
+        days = _LOG_RETENTION_DAYS.get(self._log_retention, 0)
+        if not days:
+            return
+        log_dir = self._log_dir()
+        if not log_dir.is_dir():
+            return
+        cutoff = time.time() - days * 86400
+        try:
+            for f in log_dir.glob("*.txt"):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    # ---------- 自动更新 ----------
+    def _check_update(self) -> None:
+        today = datetime.date.today().isoformat()
+        if self._last_update_check == today:
+            return
+        self._last_update_check = today
+        self._save_config()
+        threading.Thread(target=self._do_check_update, daemon=True).start()
+
+    def _do_check_update(self) -> None:
+        try:
+            import urllib.request
+            req = urllib.request.Request(_UPDATE_API, headers={"User-Agent": _APP_NAME})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            tag = str(data.get("tag_name") or data.get("name") or "")
+            latest = _parse_version(tag)
+            current = _parse_version(_APP_VERSION)
+            if latest and current and latest > current:
+                html_url = str(data.get("html_url") or _UPDATE_PAGE)
+                self._update_ready.emit(tag, html_url)
+        except Exception:
+            pass
+
+    def _prompt_update(self, tag: str, url: str) -> None:
+        ret = QMessageBox.question(
+            self, "发现新版本",
+            f"发现新版本 {tag}（当前 {_APP_VERSION}）。\n是否前往 Gitee 下载？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if ret == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl(url))
+
+    # ---------- 配置导出 / 导入 ----------
+    def _export_config(self) -> None:
+        default = str(Path.home() / "ohmyport_config.json")
+        path, _ = QFileDialog.getSaveFileName(self, "导出配置", default, "JSON 文件 (*.json)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(
+                json.dumps(self._config_data(), ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "导出失败", str(exc))
+            return
+        self._active_sys(f"配置已导出: {path}")
+
+    def _import_config(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "导入配置", "", "JSON 文件 (*.json)")
+        if not path:
+            return
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            QMessageBox.warning(self, "导入失败", f"无法读取配置文件：\n{exc}")
+            return
+        if not isinstance(data, dict):
+            QMessageBox.warning(self, "导入失败", "配置文件格式无效")
+            return
+        # 全局设置
+        if isinstance(data.get("theme"), str) and data["theme"] in ("black", "eye", "day"):
+            self._theme = data["theme"]
+            self._apply_theme_qss()
+        if isinstance(data.get("auto_record"), bool):
+            self._auto_record = data["auto_record"]
+            self.auto_record_action.setChecked(self._auto_record)
+        if isinstance(data.get("shard_mb"), int):
+            self._shard_mb = max(1, data["shard_mb"])
+        if isinstance(data.get("log_retention"), str) and data["log_retention"] in _LOG_RETENTION_KEYS:
+            self._log_retention = data["log_retention"]
+        if isinstance(data.get("log_dir"), str):
+            self._log_dir_override = data["log_dir"] or None
+        if isinstance(data.get("bg_image"), str):
+            self._bg_image = data["bg_image"]
+        if isinstance(data.get("bg_blur"), int):
+            self._bg_blur = max(0, min(50, data["bg_blur"]))
+        if isinstance(data.get("bg_enabled"), bool):
+            self._bg_enabled = data["bg_enabled"]
+        self._apply_background()
+        # 命令页 / 命令
+        pages = data.get("pages")
+        if isinstance(pages, list) and pages:
+            self._pages = [str(p) for p in pages]
+        cmds = data.get("commands")
+        if isinstance(cmds, list):
+            loaded = []
+            for c in cmds:
+                if isinstance(c, dict) and (c.get("name") or c.get("content")):
+                    page = c.get("page")
+                    if not isinstance(page, int) or page < 0 or page >= len(self._pages):
+                        page = 0
+                    loaded.append({
+                        "name": str(c.get("name") or ""),
+                        "content": str(c.get("content") or ""),
+                        "cycle": bool(c.get("cycle")),
+                        "page": page,
+                    })
+            self._commands = loaded
+        self._rebuild_command_tabs()
+        # 会话
+        sessions = data.get("sessions")
+        if isinstance(sessions, list) and sessions:
+            self._remembered_sessions = [d for d in sessions if isinstance(d, dict)]
+            target = max(1, len(self._remembered_sessions))
+            while len(self._sessions) < target:
+                self._add_session()
+            while len(self._sessions) > target:
+                self._close_session(len(self._sessions) - 1)
+            for i, s in enumerate(self._sessions):
+                if i < len(self._remembered_sessions):
+                    self._apply_remembered_state(s, self._remembered_sessions[i])
+        self._save_config()
+        self._active_sys(f"配置已导入: {path}")
 
     # ---------- 主题 ----------
     def _set_theme(self, theme: str) -> None:
@@ -2048,11 +2292,27 @@ class SerialToolWindow(QMainWindow):
                 combo.setCurrentIndex(idx)
 
     def _open_background_dialog(self) -> None:
+        bg_dir = Path(self._bg_dir)
+        bg_dir.mkdir(parents=True, exist_ok=True)
         dlg = QDialog(self)
         dlg.setWindowTitle("背景皮肤")
         form = QFormLayout(dlg)
+
         combo = QComboBox()
         self._refresh_bg_combo(combo)
+
+        # 背景图存放提示行
+        hint_row = QWidget()
+        hl = QHBoxLayout(hint_row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hint = QLabel(f"背景图存放目录：{bg_dir}")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888888;")
+        hl.addWidget(hint, 1)
+        hl.addWidget(_make_btn("打开目录", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(bg_dir)))))
+        hl.addWidget(_make_btn("刷新", lambda: self._refresh_bg_combo(combo)))
+        form.addRow("", hint_row)
+
         form.addRow("背景图片", combo)
         blur_slider = QSlider(Qt.Horizontal)
         blur_slider.setRange(0, 50)
@@ -2103,7 +2363,7 @@ class SerialToolWindow(QMainWindow):
         if not src.exists():
             _clear()
             return
-        cache_dir = self._base_dir() / "bg_cache"
+        cache_dir = _data_dir() / "bg_cache"
         try:
             st = src.stat()
             key = hashlib.md5(
@@ -2154,8 +2414,32 @@ def _resource_path(filename: str) -> Path:
     return Path(__file__).resolve().parent / filename
 
 
+def _install_excepthook() -> None:
+    """把未捕获异常写到 error.log（exe 同级，不可写则落到数据目录）。"""
+    import traceback
+
+    def hook(exc_type, exc_value, exc_tb) -> None:
+        log = _data_dir() / "error.log"
+        try:
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(f"\n[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n")
+                f.write("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+        except Exception:
+            pass
+        try:
+            QMessageBox.critical(
+                None, f"{_APP_NAME} 程序异常",
+                f"发生未捕获异常，已记录到：\n{log}\n\n请把该文件反馈给开发者。",
+            )
+        except Exception:
+            pass
+
+    sys.excepthook = hook
+
+
 def main() -> None:
     app = QApplication(sys.argv)
+    _install_excepthook()
     icon = QIcon(str(_resource_path("my-icon.ico")))
     app.setWindowIcon(icon)
     win = SerialToolWindow()

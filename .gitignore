@@ -8,11 +8,16 @@ __pycache__/
 Logs/
 serial_tool_config.json
 bg_cache/
+error.log
+.ohmyport_probe
 
 # PyInstaller 构建产物
 build/
 dist/
 *.spec
+
+# Inno Setup 输出
+Output/
 
 # 发布产物
 release/
