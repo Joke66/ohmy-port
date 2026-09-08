@@ -6,7 +6,7 @@ A standalone serial debugging tool built with Python + PySide6, supporting multi
 
 ## Features
 
-- **Serial I/O**: true HEX send/receive, encoding selection (ASCII / UTF-8 / GBK), full serial parameters (data/stop/parity/flow control/DTR/RTS), baud rate selectable or custom-entered, hot-plug auto detection
+- **Serial I/O**: true HEX send/receive, encoding selection (ASCII / UTF-8 / GBK), full serial parameters (data/stop/parity/flow control/DTR/RTS), baud rate selectable or custom-entered (right-click to delete custom entries), hot-plug auto detection
 - **Escaped send**: supports `\r \n \t \0 \xNN \\` escape sequences; text and HEX can be mixed
 - **Multi-port**: parallel monitoring of multiple serial ports in one window via tabs, each with independent parameters/display/filter/logging/stats; connected tabs show a green dot for at-a-glance status
 - **Multi-keyword filter**: highlight / include-only / exclude / split-pane, plus search (Ctrl+F)
@@ -141,6 +141,6 @@ python benchmark.py
 
 ## Version
 
-- Version: 1.8.4
+- Version: 1.8.5
 - Author: ShineZhang
 - Date: 2026-09-07

@@ -400,6 +400,20 @@ class _LogWheelFilter(QObject):
         return False
 
 
+class _BaudMenuFilter(QObject):
+    """波特率输入框右键：弹出删除自定义波特率的菜单。"""
+
+    def __init__(self, session):
+        super().__init__()
+        self._session = session
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.ContextMenu:
+            self._session._show_baud_menu(event.globalPos())
+            return True
+        return False
+
+
 class BgCentralWidget(QWidget):
     """整窗口背景层：在 paintEvent 中绘制一张（模糊）图片，作为唯一背景。"""
 
@@ -536,6 +550,7 @@ class SerialSession(QWidget):
         self._hl_regex = None
         self._hl_regex_key = None
         self._connected_baud: str | None = None
+        self._custom_bauds: list[str] = []
         self._build()
         self.serial.set_receive_callback(self._on_receive_batch)
         self._flush_timer = QTimer(self)
@@ -582,7 +597,9 @@ class SerialSession(QWidget):
         self.baud_combo.addItems(_BAUDS)
         self.baud_combo.setCurrentText("115200")
         self.baud_combo.setMinimumWidth(90)
-        self.baud_combo.setToolTip("可直接输入自定义波特率（连接成功后加入下拉列表并记住）")
+        self.baud_combo.setToolTip("可直接输入自定义波特率（连接成功后加入下拉列表并记住，右键可删除）")
+        self._baud_menu_filter = _BaudMenuFilter(self)
+        self.baud_combo.lineEdit().installEventFilter(self._baud_menu_filter)
         conn.addWidget(self.baud_combo)
         conn.addStretch(1)
         layout.addWidget(self.conn_panel)
@@ -828,8 +845,18 @@ class SerialSession(QWidget):
         _start_fold(self.conn_panel, visible)
         self.window._set_action_checked(self.window.conn_action, visible)
 
+    def _add_baud_item(self, text: str) -> None:
+        """把波特率加入下拉列表（去重）；非预设项同时记入自定义列表以便持久化。"""
+        text = text.strip()
+        if not text:
+            return
+        if self.baud_combo.findText(text) < 0:
+            self.baud_combo.addItem(text)
+        if text not in _BAUDS and text not in self._custom_bauds:
+            self._custom_bauds.append(text)
+
     def _commit_custom_baud(self) -> None:
-        """把编辑框输入的自定义波特率加入下拉列表（合法正整数且不在列表中时）。"""
+        """提交当前编辑框输入的合法波特率到下拉列表（连接成功时调用）。"""
         text = self.baud_combo.currentText().strip()
         if not text:
             return
@@ -839,9 +866,51 @@ class SerialSession(QWidget):
             return
         if baud <= 0:
             return
-        if self.baud_combo.findText(text) < 0:
-            self.baud_combo.addItem(text)
-            self.baud_combo.setCurrentText(text)
+        self._add_baud_item(text)
+        self.baud_combo.setCurrentText(text)
+
+    def _delete_current_custom_baud(self) -> None:
+        """删除当前（非预设）自定义波特率。"""
+        text = self.baud_combo.currentText().strip()
+        if not text or text in _BAUDS:
+            return
+        idx = self.baud_combo.findText(text)
+        if idx >= 0:
+            self.baud_combo.removeItem(idx)
+        if text in self._custom_bauds:
+            self._custom_bauds.remove(text)
+        if self._connected_baud == text:
+            self._connected_baud = None
+        self.baud_combo.setCurrentText("115200")
+        self.window._save_config()
+
+    def _clear_custom_bauds(self) -> None:
+        """清空所有自定义波特率，恢复到只含预设。"""
+        for text in list(self._custom_bauds):
+            idx = self.baud_combo.findText(text)
+            if idx >= 0:
+                self.baud_combo.removeItem(idx)
+        self._custom_bauds.clear()
+        if self._connected_baud not in _BAUDS:
+            self._connected_baud = None
+        self.baud_combo.setCurrentText("115200")
+        self.window._save_config()
+
+    def _show_baud_menu(self, global_pos) -> None:
+        """右键波特率输入框：删除自定义波特率。"""
+        menu = QMenu(self)
+        text = self.baud_combo.currentText().strip()
+        is_custom = bool(text) and text not in _BAUDS
+        del_action = menu.addAction(f"删除自定义波特率 {text}" if is_custom else "删除当前自定义波特率")
+        del_action.setEnabled(is_custom)
+        clear_action = menu.addAction("清空全部自定义波特率")
+        clear_action.setEnabled(bool(self._custom_bauds))
+        chosen = menu.exec(global_pos)
+        if chosen is del_action and is_custom:
+            self._delete_current_custom_baud()
+        elif chosen is clear_action:
+            self._clear_custom_bauds()
+        menu.deleteLater()
 
     def _check_hotplug(self) -> None:
         current = {d for d, _ in self.serial.list_ports()}
@@ -1867,11 +1936,17 @@ class SerialToolWindow(QMainWindow):
             idx = s.port_combo.findData(port)
             if idx >= 0:
                 s.port_combo.setCurrentIndex(idx)
+        custom_bauds = r.get("custom_bauds")
+        if isinstance(custom_bauds, list):
+            for b in custom_bauds:
+                if isinstance(b, str):
+                    s._add_baud_item(b)
         baud = r.get("baud")
         if baud:
             s.baud_combo.setCurrentText(str(baud))
-            s._commit_custom_baud()
             s._connected_baud = str(baud)
+            if str(baud) not in _BAUDS:
+                s._add_baud_item(str(baud))
         if r.get("filter_keywords"):
             s.keyword_edit.setText(r["filter_keywords"])
         mode = r.get("filter_mode")
@@ -2412,6 +2487,7 @@ class SerialToolWindow(QMainWindow):
             sessions.append({
                 "port": s.port_combo.currentData(),
                 "baud": s._connected_baud,
+                "custom_bauds": s._custom_bauds,
                 "filter_keywords": s.keyword_edit.text(),
                 "filter_mode": s.mode_combo.currentData(),
                 "filter_case": s.case_check.isChecked(),
