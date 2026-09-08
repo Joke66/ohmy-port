@@ -80,7 +80,8 @@ Remove-Item $stage -Recurse -Force
 Write-Host "[5/5] 生成安装包（可选）..." -ForegroundColor Cyan
 $iscc = @(
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-    "C:\Program Files\Inno Setup 6\ISCC.exe"
+    "C:\Program Files\Inno Setup 6\ISCC.exe",
+    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($iscc) {
     & $iscc /DMyAppVersion=$Version "installer.iss"
