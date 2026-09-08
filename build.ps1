@@ -2,12 +2,11 @@
 #  OhmyPort 一键打包 + 生成发布产物 (PowerShell)
 #
 #  产物：
-#    dist\OhmyPort.exe                    构建输出（未压缩）
+#    dist\OhmyPort\                       构建输出（onedir 文件夹）
 #    release\OhmyPort_v<版本>\            发布目录（保留历史版本，不会自动删除）
-#      ├─ OhmyPort.exe                    未压缩
-#      ├─ OhmyPort_v<版本>.zip            压缩包（含 exe + 使用说明）
-#      ├─ OhmyPort_Setup_v<版本>.exe      安装包（需安装 Inno Setup 6）
-#      └─ 使用说明.md
+#      ├─ OhmyPort\                       绿色免安装版文件夹（exe + 依赖 + 使用说明）
+#      ├─ OhmyPort_v<版本>.zip            绿色版压缩包（整个文件夹打包，解压即用）
+#      └─ OhmyPort_Setup_v<版本>.exe      安装包（需安装 Inno Setup 6）
 #
 #  用法：
 #    powershell -ExecutionPolicy Bypass -File build.ps1
@@ -41,7 +40,7 @@ foreach ($d in @("build", "dist")) {
 # [3/4] 打包
 Write-Host "[3/4] 开始打包..." -ForegroundColor Cyan
 $env:QT_API = "pyside6"
-python -m PyInstaller --noconfirm --clean --windowed --onefile `
+python -m PyInstaller --noconfirm --clean --windowed --onedir `
     --name $AppName `
     --icon my-icon.ico `
     --add-data "my-icon.ico;." `
@@ -63,18 +62,15 @@ Write-Host "[4/4] 生成发布产物..." -ForegroundColor Cyan
 $releaseDir = Join-Path $PSScriptRoot "release\${AppName}_v${Version}"
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
-# 未压缩
-Copy-Item (Join-Path $PSScriptRoot "dist\${AppName}.exe") (Join-Path $releaseDir "${AppName}.exe") -Force
-Copy-Item (Join-Path $PSScriptRoot "README.md") (Join-Path $releaseDir "使用说明.md") -Force
+# 绿色免安装版（onedir 文件夹，含 exe + 依赖 + 使用说明）
+$greenDir = Join-Path $releaseDir $AppName
+if (Test-Path $greenDir) { Remove-Item $greenDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $greenDir | Out-Null
+Copy-Item (Join-Path $PSScriptRoot "dist\$AppName\*") $greenDir -Recurse -Force
+Copy-Item (Join-Path $PSScriptRoot "README.md") (Join-Path $greenDir "使用说明.md") -Force
 
-# 压缩包
-$stage = Join-Path $env:TEMP "ohmyport_stage"
-Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $stage | Out-Null
-Copy-Item (Join-Path $PSScriptRoot "dist\${AppName}.exe") (Join-Path $stage "${AppName}.exe") -Force
-Copy-Item (Join-Path $PSScriptRoot "README.md") (Join-Path $stage "使用说明.md") -Force
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath (Join-Path $releaseDir "${AppName}_v${Version}.zip") -Force
-Remove-Item $stage -Recurse -Force
+# 绿色版压缩包（整个文件夹打包，解压即用）
+Compress-Archive -Path $greenDir -DestinationPath (Join-Path $releaseDir "${AppName}_v${Version}.zip") -Force
 
 # [5/5] 可选：用 Inno Setup 生成安装包
 Write-Host "[5/5] 生成安装包（可选）..." -ForegroundColor Cyan

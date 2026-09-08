@@ -10,8 +10,7 @@
 
 | 文件 | 类型 | 说明 |
 | --- | --- | --- |
-| `OhmyPort.exe` | 绿色免安装版（单文件） | 无需安装，双击即用；适合临时使用、放 U 盘随身携带 |
-| `OhmyPort_v<版本>.zip` | 绿色免安装版（压缩包） | 解压即用，内含 exe 与《使用说明》 |
+| `OhmyPort_v<版本>.zip` | 绿色免安装版（压缩包） | 解压得到 `OhmyPort` 文件夹，运行其中的 `OhmyPort.exe` 即可，无需安装；适合临时使用、放 U 盘携带 |
 | `OhmyPort_Setup_v<版本>.exe` | 安装包 | 运行安装向导，安装到 Program Files，可创建开始菜单与桌面快捷方式，支持卸载 |
 
 > 绿色免安装版与安装包**功能完全一致**，仅部署方式不同：绿色版不写注册表、不建快捷方式；安装包便于长期使用与卸载。
@@ -61,10 +60,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 产物：
 
-- `dist\OhmyPort.exe` — 构建输出
+- `dist\OhmyPort\` — 构建输出（onedir 文件夹，启动更快）
 - `release\OhmyPort_v<版本>\` — 发布目录
-  - `OhmyPort.exe` — 免安装绿色版
-  - `OhmyPort_v<版本>.zip` — 绿色版压缩包
+  - `OhmyPort\` — 绿色免安装版文件夹（exe + 依赖 + 使用说明）
+  - `OhmyPort_v<版本>.zip` — 绿色版压缩包（整个文件夹打包，解压即用）
   - `OhmyPort_Setup_v<版本>.exe` — 安装包（需安装 Inno Setup 6，未安装则跳过）
 
 ## 使用说明

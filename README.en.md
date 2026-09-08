@@ -10,8 +10,7 @@ Get the latest release from [Gitee Releases](https://gitee.com/Shine_Zhang/ohmy-
 
 | File | Type | Description |
 | --- | --- | --- |
-| `OhmyPort.exe` | Portable (single file) | No install needed, double-click to run; great for temporary use or a USB drive |
-| `OhmyPort_v<version>.zip` | Portable (zip) | Extract and run; includes the exe and the user guide |
+| `OhmyPort_v<version>.zip` | Portable (zip) | Extract to get the `OhmyPort` folder, then run `OhmyPort.exe` inside — no install needed; great for temporary use or a USB drive |
 | `OhmyPort_Setup_v<version>.exe` | Installer | Runs the setup wizard, installs to Program Files, can create Start Menu and desktop shortcuts, supports uninstall |
 
 > The portable build and the installer are **functionally identical**; they differ only in deployment.
@@ -61,10 +60,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 Outputs:
 
-- `dist\OhmyPort.exe` — build output
+- `dist\OhmyPort\` — build output (onedir folder, faster startup)
 - `release\OhmyPort_v<version>\` — release directory
-  - `OhmyPort.exe` — portable version
-  - `OhmyPort_v<version>.zip` — portable zip
+  - `OhmyPort\` — portable folder (exe + dependencies + user guide)
+  - `OhmyPort_v<version>.zip` — portable zip (whole folder packed, extract and run)
   - `OhmyPort_Setup_v<version>.exe` — installer (requires Inno Setup 6; skipped if absent)
 
 ## Usage
