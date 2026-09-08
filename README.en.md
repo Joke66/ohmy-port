@@ -2,7 +2,7 @@
 
 A standalone serial debugging tool built with Python + PySide6, supporting multiple serial ports in parallel.
 
-![Screenshot](image.png)
+![Screenshot](image1.png)
 
 ## Features
 
