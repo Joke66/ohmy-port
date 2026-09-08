@@ -535,6 +535,7 @@ class SerialSession(QWidget):
         self._suppress_scroll = False
         self._hl_regex = None
         self._hl_regex_key = None
+        self._connected_baud: str | None = None
         self._build()
         self.serial.set_receive_callback(self._on_receive_batch)
         self._flush_timer = QTimer(self)
@@ -581,8 +582,7 @@ class SerialSession(QWidget):
         self.baud_combo.addItems(_BAUDS)
         self.baud_combo.setCurrentText("115200")
         self.baud_combo.setMinimumWidth(90)
-        self.baud_combo.setToolTip("可直接输入自定义波特率（回车确认，自动加入下拉列表）")
-        self.baud_combo.lineEdit().editingFinished.connect(self._commit_custom_baud)
+        self.baud_combo.setToolTip("可直接输入自定义波特率（连接成功后加入下拉列表并记住）")
         conn.addWidget(self.baud_combo)
         conn.addStretch(1)
         layout.addWidget(self.conn_panel)
@@ -879,7 +879,6 @@ class SerialSession(QWidget):
                 self._sys("请选择串口")
                 QMessageBox.warning(self, "串口连接", "请先选择串口")
                 return
-            self._commit_custom_baud()
             try:
                 baud = int(self.baud_combo.currentText())
             except ValueError:
@@ -900,6 +899,8 @@ class SerialSession(QWidget):
                 self.connect_btn.setText("关闭串口")
                 _set_role(self.connect_btn, "danger")
                 self._sys(f"已打开 {port} @ {baud}")
+                self._connected_baud = str(baud)  # 只记录连接成功的波特率
+                self._commit_custom_baud()  # 连接成功后加入下拉列表
                 if self.window._auto_record and not self._logmgr.is_open:
                     self._start_record()
                 self._set_conn_visible(False)  # 连接成功后自动收起端口连接配置
@@ -1870,6 +1871,7 @@ class SerialToolWindow(QMainWindow):
         if baud:
             s.baud_combo.setCurrentText(str(baud))
             s._commit_custom_baud()
+            s._connected_baud = str(baud)
         if r.get("filter_keywords"):
             s.keyword_edit.setText(r["filter_keywords"])
         mode = r.get("filter_mode")
@@ -2409,7 +2411,7 @@ class SerialToolWindow(QMainWindow):
             fs = s.log_text.font().pointSize()
             sessions.append({
                 "port": s.port_combo.currentData(),
-                "baud": s.baud_combo.currentText(),
+                "baud": s._connected_baud,
                 "filter_keywords": s.keyword_edit.text(),
                 "filter_mode": s.mode_combo.currentData(),
                 "filter_case": s.case_check.isChecked(),
