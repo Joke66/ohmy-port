@@ -581,6 +581,8 @@ class SerialSession(QWidget):
         self.baud_combo.addItems(_BAUDS)
         self.baud_combo.setCurrentText("115200")
         self.baud_combo.setMinimumWidth(90)
+        self.baud_combo.setToolTip("可直接输入自定义波特率（回车确认，自动加入下拉列表）")
+        self.baud_combo.lineEdit().editingFinished.connect(self._commit_custom_baud)
         conn.addWidget(self.baud_combo)
         conn.addStretch(1)
         layout.addWidget(self.conn_panel)
@@ -826,6 +828,21 @@ class SerialSession(QWidget):
         _start_fold(self.conn_panel, visible)
         self.window._set_action_checked(self.window.conn_action, visible)
 
+    def _commit_custom_baud(self) -> None:
+        """把编辑框输入的自定义波特率加入下拉列表（合法正整数且不在列表中时）。"""
+        text = self.baud_combo.currentText().strip()
+        if not text:
+            return
+        try:
+            baud = int(text)
+        except ValueError:
+            return
+        if baud <= 0:
+            return
+        if self.baud_combo.findText(text) < 0:
+            self.baud_combo.addItem(text)
+            self.baud_combo.setCurrentText(text)
+
     def _check_hotplug(self) -> None:
         current = {d for d, _ in self.serial.list_ports()}
         if self.serial.is_connected:
@@ -862,9 +879,14 @@ class SerialSession(QWidget):
                 self._sys("请选择串口")
                 QMessageBox.warning(self, "串口连接", "请先选择串口")
                 return
+            self._commit_custom_baud()
             try:
                 baud = int(self.baud_combo.currentText())
             except ValueError:
+                self._sys("波特率无效")
+                QMessageBox.warning(self, "串口连接", "波特率无效")
+                return
+            if baud <= 0:
                 self._sys("波特率无效")
                 QMessageBox.warning(self, "串口连接", "波特率无效")
                 return
@@ -1847,6 +1869,7 @@ class SerialToolWindow(QMainWindow):
         baud = r.get("baud")
         if baud:
             s.baud_combo.setCurrentText(str(baud))
+            s._commit_custom_baud()
         if r.get("filter_keywords"):
             s.keyword_edit.setText(r["filter_keywords"])
         mode = r.get("filter_mode")
