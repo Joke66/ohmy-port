@@ -4,6 +4,18 @@ A standalone serial debugging tool built with Python + PySide6, supporting multi
 
 ![Screenshot](image1.png)
 
+## Download
+
+Get the latest release from [Gitee Releases](https://gitee.com/Shine_Zhang/ohmy-port/releases). Each version ships in two forms:
+
+| File | Type | Description |
+| --- | --- | --- |
+| `OhmyPort.exe` | Portable (single file) | No install needed, double-click to run; great for temporary use or a USB drive |
+| `OhmyPort_v<version>.zip` | Portable (zip) | Extract and run; includes the exe and the user guide |
+| `OhmyPort_Setup_v<version>.exe` | Installer | Runs the setup wizard, installs to Program Files, can create Start Menu and desktop shortcuts, supports uninstall |
+
+> The portable build and the installer are **functionally identical**; they differ only in deployment.
+
 ## Features
 
 - **Serial I/O**: true HEX send/receive, encoding selection (ASCII / UTF-8 / GBK), full serial parameters (data/stop/parity/flow control/DTR/RTS), baud rate selectable or custom-entered (right-click to delete custom entries), hot-plug auto detection
