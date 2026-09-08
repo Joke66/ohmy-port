@@ -2774,10 +2774,10 @@ class SerialToolWindow(QMainWindow):
         return _LOG_THEME_COLORS.get(resolved, _LOG_THEME_COLORS["day"]).get("muted", "#888888")
 
     # ---------- 背景皮肤 ----------
-    def _refresh_bg_combo(self, combo: QComboBox) -> None:
+    def _refresh_bg_combo(self, combo: QComboBox, directory: str | None = None) -> None:
         combo.clear()
         combo.addItem("无", "")
-        d = Path(self._bg_dir)
+        d = Path(directory if directory is not None else self._bg_dir)
         if d.is_dir():
             exts = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
             for f in sorted(d.iterdir()):
@@ -2796,18 +2796,34 @@ class SerialToolWindow(QMainWindow):
         form = QFormLayout(dlg)
 
         combo = QComboBox()
-        self._refresh_bg_combo(combo)
+        state = {"dir": str(bg_dir)}
+
+        def refresh() -> None:
+            self._refresh_bg_combo(combo, state["dir"])
+
+        refresh()
 
         # 背景图存放提示行
         hint_row = QWidget()
         hl = QHBoxLayout(hint_row)
         hl.setContentsMargins(0, 0, 0, 0)
-        hint = QLabel(f"背景图存放目录：{bg_dir}")
+        hint = QLabel(f"背景图存放目录：{state['dir']}")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {self._muted_color()};")
         hl.addWidget(hint, 1)
-        hl.addWidget(_make_btn("打开目录", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(bg_dir)))))
-        hl.addWidget(_make_btn("刷新", lambda: self._refresh_bg_combo(combo)))
+
+        def choose_dir() -> None:
+            path = QFileDialog.getExistingDirectory(dlg, "选择背景图目录", state["dir"])
+            if not path:
+                return
+            Path(path).mkdir(parents=True, exist_ok=True)
+            state["dir"] = path
+            hint.setText(f"背景图存放目录：{path}")
+            refresh()
+
+        hl.addWidget(_make_btn("选择目录...", choose_dir))
+        hl.addWidget(_make_btn("打开目录", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(state["dir"]))))
+        hl.addWidget(_make_btn("刷新", refresh))
         form.addRow("", hint_row)
 
         form.addRow("背景图片", combo)
@@ -2824,6 +2840,7 @@ class SerialToolWindow(QMainWindow):
         form.addRow(btns)
         if dlg.exec() != QDialog.Accepted:
             return
+        self._bg_dir = state["dir"]
         self._bg_image = combo.currentData() or ""
         self._bg_blur = blur_slider.value()
         self._bg_enabled = enable_check.isChecked()

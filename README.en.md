@@ -62,7 +62,7 @@ Outputs:
 3. View → "发送辅助" to add common commands (name + content); click to send, right-click to edit/delete; add pages to organize.
 4. View → "数值绘图" to open the plot window and add extraction rules (e.g. `temp=(\d+\.?\d*)` or keyword `NTC`).
 5. Settings → theme to switch follow-system / dark / eye-friendly / light.
-6. Settings → "背景皮肤" to set the background image; the dialog shows the image directory — drop images there and click "刷新".
+6. Settings → "背景皮肤" to set the background image; the dialog shows the image directory — drop images there and click "刷新", or click "选择目录" to pick your own wallpaper folder.
 7. Settings → retention policy to set log retention (week / month / half-year / year / unlimited; default one month).
 8. Settings → export/import config to back up or share: includes global settings, all serial tab parameters, **and all send-assist command pages and commands** (name, content, page, cycle flag).
 
@@ -141,6 +141,6 @@ python benchmark.py
 
 ## Version
 
-- Version: 1.8.5
+- Version: 1.8.6
 - Author: ShineZhang
 - Date: 2026-09-08
