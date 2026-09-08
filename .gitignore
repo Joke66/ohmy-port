@@ -8,6 +8,7 @@ __pycache__/
 Logs/
 serial_tool_config.json
 bg_cache/
+background/
 error.log
 .ohmyport_probe
 
