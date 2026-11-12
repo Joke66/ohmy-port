@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OhmyPort.Core.Serial;
 
 namespace OhmyPort.Core.Models;
 
@@ -19,6 +20,18 @@ public sealed class SessionConfig
     public bool FilterCase { get; set; }
     public bool FilterEnabled { get; set; }
     public int FontSize { get; set; } = 11;
+
+    /// <summary>发送自动追加的校验类型（none/sum8/xor8/crc16_modbus）。</summary>
+    public string SendChecksum { get; set; } = ChecksumKeys.None;
+
+    /// <summary>协议帧解析设置（按帧切分接收流）。</summary>
+    public bool FrameEnabled { get; set; }
+    public string FrameHeader { get; set; } = "";
+    public string FrameTail { get; set; } = "";
+    public int FrameLengthSize { get; set; }
+    public int FrameLengthBase { get; set; }
+    public bool FrameBigEndian { get; set; } = true;
+    public string FrameChecksum { get; set; } = ChecksumKeys.None;
 }
 
 /// <summary>
@@ -117,6 +130,25 @@ public sealed class AppConfig
             {
                 s.FontSize = 11;
             }
+
+            if (!ChecksumKeys.All.Contains(s.SendChecksum))
+            {
+                s.SendChecksum = ChecksumKeys.None;
+            }
+
+            if (!ChecksumKeys.All.Contains(s.FrameChecksum))
+            {
+                s.FrameChecksum = ChecksumKeys.None;
+            }
+
+            if (s.FrameLengthSize is not (0 or 1 or 2 or 4))
+            {
+                s.FrameLengthSize = 0;
+            }
+
+            s.FrameLengthBase = Math.Clamp(s.FrameLengthBase, -65536, 65536);
+            s.FrameHeader ??= "";
+            s.FrameTail ??= "";
 
             s.CustomBauds ??= [];
             s.Port = string.IsNullOrEmpty(s.Port) ? null : s.Port;

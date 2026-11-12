@@ -225,12 +225,44 @@ public sealed class FrameParser
         return crc;
     }
 
-    /// <summary>把配置里的字符串（无 / sum8 / xor8 / crc16_modbus）转成枚举。</summary>
+    /// <summary>
+    /// 计算校验字节（发送侧自动追加 / 校验计算器共用）。
+    /// 返回字节按「帧内存储顺序」排列：CRC16-Modbus 低字节在前（与 <see cref="Check"/> 的比较一致）。
+    /// </summary>
+    public static byte[] ChecksumBytes(ChecksumKind kind, ReadOnlySpan<byte> data)
+    {
+        switch (kind)
+        {
+            case ChecksumKind.Sum8:
+                return [(byte)(Sum8(data) & 0xFF)];
+            case ChecksumKind.Xor8:
+                return [Xor8(data)];
+            case ChecksumKind.Crc16Modbus:
+            {
+                var crc = Crc16Modbus(data);
+                return [(byte)(crc & 0xFF), (byte)(crc >> 8)];
+            }
+            default:
+                return [];
+        }
+    }
+
+    /// <summary>把配置里的字符串（none / sum8 / xor8 / crc16_modbus）转成枚举。</summary>
     public static ChecksumKind ParseChecksum(string? value) => value switch
     {
-        "sum8" => ChecksumKind.Sum8,
-        "xor8" => ChecksumKind.Xor8,
-        "crc16_modbus" => ChecksumKind.Crc16Modbus,
+        ChecksumKeys.Sum8 => ChecksumKind.Sum8,
+        ChecksumKeys.Xor8 => ChecksumKind.Xor8,
+        ChecksumKeys.Crc16Modbus => ChecksumKind.Crc16Modbus,
         _ => ChecksumKind.None,
     };
+}
+
+/// <summary>校验类型配置键（none / sum8 / xor8 / crc16_modbus）。</summary>
+public static class ChecksumKeys
+{
+    public const string None = "none";
+    public const string Sum8 = "sum8";
+    public const string Xor8 = "xor8";
+    public const string Crc16Modbus = "crc16_modbus";
+    public static readonly string[] All = [None, Sum8, Xor8, Crc16Modbus];
 }

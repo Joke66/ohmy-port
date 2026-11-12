@@ -41,6 +41,8 @@
                   app:IconGlyph.Name="sliders" Click="OnToggleParamsClick" />
         <MenuItem x:Name="FilterMenu" Header="关键词过滤" IsCheckable="True"
                   app:IconGlyph.Name="filter" Click="OnToggleFilterClick" />
+        <MenuItem x:Name="ProtocolMenu" Header="协议帧解析" IsCheckable="True"
+                  app:IconGlyph.Name="protocol" Click="OnToggleProtocolClick" />
         <MenuItem x:Name="SendMenu" Header="消息发送" IsCheckable="True" IsChecked="True"
                   app:IconGlyph.Name="message" Click="OnToggleSendClick" />
         <MenuItem x:Name="SendAssistMenu" Header="发送辅助" IsCheckable="True"
@@ -78,6 +80,9 @@
         <MenuItem x:Name="CloseConfirmMenu" Header="关闭时询问" IsCheckable="True"
                   app:IconGlyph.Name="question" Click="OnToggleCloseConfirmClick" />
       </MenuItem>
+      <MenuItem Header="工具(_T)">
+        <MenuItem Header="校验计算器..." app:IconGlyph.Name="calc" Click="OnOpenChecksumCalculatorClick" />
+      </MenuItem>
       <MenuItem Header="帮助(_H)">
         <MenuItem Header="关于 OhmyPort" app:IconGlyph.Name="info" Click="OnAboutClick" />
       </MenuItem>
@@ -106,6 +111,10 @@
         <ToggleButton x:Name="TbFilter" Tag="filter" Style="{StaticResource ToolStrip.Toggle}"
                       ToolTip="关键词过滤" Click="OnToolbarToggleClick">
           <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.filter}" />
+        </ToggleButton>
+        <ToggleButton x:Name="TbProtocol" Tag="protocol" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="协议帧解析" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.protocol}" />
         </ToggleButton>
         <ToggleButton x:Name="TbSend" Tag="send" Style="{StaticResource ToolStrip.Toggle}"
                       ToolTip="消息发送" Click="OnToolbarToggleClick">

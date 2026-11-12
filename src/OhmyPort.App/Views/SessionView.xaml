@@ -8,6 +8,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
@@ -56,8 +57,27 @@
       <Button x:Name="FilterButton" Margin="12,0,0,0" Content="应用" ToolTip="启用 / 关闭关键词过滤" />
     </StackPanel>
 
+    <!-- 协议帧解析（默认隐藏，视图菜单里打开） -->
+    <StackPanel x:Name="ProtocolPanel" Grid.Row="3" Margin="0,0,0,4" Orientation="Horizontal"
+                Visibility="Collapsed">
+      <CheckBox x:Name="FrameEnableCheck" Margin="0,0,10,0" VerticalAlignment="Center"
+                Content="按帧解析" ToolTip="开启后接收按协议帧切分（帧头/长度/校验）" />
+      <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="帧头" />
+      <TextBox x:Name="FrameHeaderEdit" Width="78" ToolTip="帧头 HEX，如 AA 55；留空则不匹配帧头" />
+      <TextBlock Margin="10,0,4,0" VerticalAlignment="Center" Text="帧尾" />
+      <TextBox x:Name="FrameTailEdit" Width="78" ToolTip="帧尾 HEX，如 0D 0A；留空则按长度切帧" />
+      <TextBlock Margin="10,0,4,0" VerticalAlignment="Center" Text="长度字段" />
+      <ComboBox x:Name="FrameLengthCombo" Width="60" ToolTip="长度字段字节数（0 表示无长度字段）" />
+      <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="长度基准" />
+      <TextBox x:Name="FrameLengthBaseEdit" Width="46" ToolTip="长度字段值再加上的偏移（可为负）" />
+      <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="字节序" />
+      <ComboBox x:Name="FrameEndianCombo" Width="66" ToolTip="长度字段的字节序" />
+      <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="校验" />
+      <ComboBox x:Name="FrameChecksumCombo" Width="108" ToolTip="校验算法（覆盖帧头+长度+数据）" />
+    </StackPanel>
+
     <!-- 日志区 -->
-    <Border Grid.Row="3" Background="{DynamicResource Brush.LogSurface}"
+    <Border Grid.Row="4" Background="{DynamicResource Brush.LogSurface}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
       <controls:LogView x:Name="LogText" MaxLines="50000">
         <controls:LogView.ContextMenu>
@@ -73,7 +93,7 @@
     </Border>
 
     <!-- 命中结果分栏（split 模式显示） -->
-    <Border x:Name="MatchedPanel" Grid.Row="4" Margin="0,4,0,0" Background="{DynamicResource Brush.LogSurface}"
+    <Border x:Name="MatchedPanel" Grid.Row="5" Margin="0,4,0,0" Background="{DynamicResource Brush.LogSurface}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3"
             Visibility="Collapsed">
       <Grid>
@@ -90,7 +110,7 @@
     </Border>
 
     <!-- 日志操作行 -->
-    <StackPanel Grid.Row="5" Margin="0,4,0,4" Orientation="Horizontal">
+    <StackPanel Grid.Row="6" Margin="0,4,0,4" Orientation="Horizontal">
       <Button x:Name="ConnectButton" Content="打开串口" Tag="primary" ToolTip="打开 / 关闭当前串口" />
       <Button x:Name="PauseButton" Margin="6,0,0,0" Content="暂停"
               ToolTip="暂停刷新显示（后台仍持续接收、缓冲）" />
@@ -102,9 +122,10 @@
     </StackPanel>
 
     <!-- 消息发送 -->
-    <Grid x:Name="SendPanel" Grid.Row="6">
+    <Grid x:Name="SendPanel" Grid.Row="7">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
         <ColumnDefinition Width="Auto" />
         <ColumnDefinition Width="Auto" />
         <ColumnDefinition Width="Auto" />
@@ -115,7 +136,9 @@
                 ToolTip="发送后追加的换行符" />
       <CheckBox x:Name="HexSendCheck" Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center"
                 Content="HEX发送" />
-      <Button x:Name="SendButton" Grid.Column="3" Margin="12,0,0,0" Content="发送" Tag="primary"
+      <ComboBox x:Name="ChecksumCombo" Grid.Column="3" Width="118" Margin="12,0,0,0"
+                ToolTip="发送时自动追加校验字节（追加在换行之前）" />
+      <Button x:Name="SendButton" Grid.Column="4" Margin="12,0,0,0" Content="发送" Tag="primary"
               ToolTip="发送当前输入内容" />
     </Grid>
   </Grid>

@@ -165,6 +165,13 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         set => FilterPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>协议帧解析面板是否可见（视图菜单控制）。</summary>
+    public bool ProtocolVisible
+    {
+        get => ProtocolPanel.Visibility == Visibility.Visible;
+        set => ProtocolPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     /// <summary>自动换行开关（主窗口全局设置，应用到主日志区与命中分栏）。</summary>
     public bool WrapEnabled
     {
@@ -215,6 +222,50 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     public bool FilterCaseSensitive => CaseCheck.IsChecked == true;
 
     public bool FilterEnabledState => _filterEnabled;
+
+    /// <summary>发送校验类型键（配置持久化用）。</summary>
+    public string SendChecksumKey => ChecksumCombo.SelectedValue as string ?? ChecksumKeys.None;
+
+    public bool FrameEnabledState => FrameEnableCheck.IsChecked == true;
+    public string FrameHeaderText => FrameHeaderEdit.Text;
+    public string FrameTailText => FrameTailEdit.Text;
+    public int FrameLengthSizeValue => (FrameLengthCombo.SelectedValue as int?) ?? 0;
+    public int FrameLengthBaseValue => int.TryParse(FrameLengthBaseEdit.Text.Trim(), out var v) ? v : 0;
+    public bool FrameBigEndianValue => (FrameEndianCombo.SelectedValue as bool?) ?? true;
+    public string FrameChecksumKey => FrameChecksumCombo.SelectedValue as string ?? ChecksumKeys.None;
+
+    /// <summary>从配置恢复协议帧解析与发送校验状态。</summary>
+    public void ApplyRememberedProtocol(string sendChecksum, bool frameEnabled, string frameHeader,
+        string frameTail, int frameLengthSize, int frameLengthBase, bool frameBigEndian, string frameChecksum)
+    {
+        if (ChecksumCombo.Items.Cast<Option>().Any(o => (string)o.Value == sendChecksum))
+        {
+            ChecksumCombo.SelectedValue = sendChecksum;
+        }
+
+        FrameEnableCheck.IsChecked = frameEnabled;
+        FrameHeaderEdit.Text = frameHeader;
+        FrameTailEdit.Text = frameTail;
+
+        if (FrameLengthCombo.Items.Cast<Option>().Any(o => (int)o.Value == frameLengthSize))
+        {
+            FrameLengthCombo.SelectedValue = frameLengthSize;
+        }
+
+        FrameLengthBaseEdit.Text = frameLengthBase.ToString();
+
+        if (FrameEndianCombo.Items.Cast<Option>().Any(o => (bool)o.Value == frameBigEndian))
+        {
+            FrameEndianCombo.SelectedValue = frameBigEndian;
+        }
+
+        if (FrameChecksumCombo.Items.Cast<Option>().Any(o => (string)o.Value == frameChecksum))
+        {
+            FrameChecksumCombo.SelectedValue = frameChecksum;
+        }
+
+        ApplyProtocol();
+    }
 
     /// <summary>从配置恢复过滤状态。</summary>
     public void ApplyRememberedFilter(string keywords, string mode, bool caseSensitive, bool enabled)
@@ -305,6 +356,40 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             .ToArray();
         NewlineCombo.SelectedIndex = 0;
 
+        // 发送校验 + 协议帧解析共用校验选项
+        var checksumOptions = new[]
+        {
+            new Option("无", ChecksumKeys.None),
+            new Option("SUM8", ChecksumKeys.Sum8),
+            new Option("XOR8", ChecksumKeys.Xor8),
+            new Option("CRC16-Modbus", ChecksumKeys.Crc16Modbus),
+        };
+        foreach (var combo in new[] { ChecksumCombo, FrameChecksumCombo })
+        {
+            combo.DisplayMemberPath = nameof(Option.Label);
+            combo.SelectedValuePath = nameof(Option.Value);
+            combo.ItemsSource = checksumOptions;
+            combo.SelectedIndex = 0;
+        }
+
+        FrameLengthCombo.DisplayMemberPath = nameof(Option.Label);
+        FrameLengthCombo.SelectedValuePath = nameof(Option.Value);
+        FrameLengthCombo.ItemsSource = new[]
+        {
+            new Option("无", 0), new Option("1", 1), new Option("2", 2), new Option("4", 4),
+        };
+        FrameLengthCombo.SelectedIndex = 0;
+
+        FrameEndianCombo.DisplayMemberPath = nameof(Option.Label);
+        FrameEndianCombo.SelectedValuePath = nameof(Option.Value);
+        FrameEndianCombo.ItemsSource = new[]
+        {
+            new Option("大端", true), new Option("小端", false),
+        };
+        FrameEndianCombo.SelectedIndex = 0;
+
+        FrameLengthBaseEdit.Text = "0";
+
         PortCombo.DisplayMemberPath = nameof(PortInfo.Display);
         PortCombo.SelectedValuePath = nameof(PortInfo.PortName);
     }
@@ -355,6 +440,15 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             }
         };
         ClearMatchedButton.Click += (_, _) => ClearMatched();
+
+        // 协议帧解析：任意字段变化即重建解析器
+        FrameEnableCheck.Click += (_, _) => ApplyProtocol();
+        FrameHeaderEdit.TextChanged += (_, _) => ApplyProtocol();
+        FrameTailEdit.TextChanged += (_, _) => ApplyProtocol();
+        FrameLengthCombo.SelectionChanged += (_, _) => ApplyProtocol();
+        FrameLengthBaseEdit.TextChanged += (_, _) => ApplyProtocol();
+        FrameEndianCombo.SelectionChanged += (_, _) => ApplyProtocol();
+        FrameChecksumCombo.SelectionChanged += (_, _) => ApplyProtocol();
 
         DtrCheck.Checked += (_, _) => _monitor.SetDtr(true);
         DtrCheck.Unchecked += (_, _) => _monitor.SetDtr(false);
@@ -834,6 +928,28 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
     private void ClearMatched() => MatchedText.ClearAll();
 
+    // ---------- 协议帧解析 ----------
+
+    private void ApplyProtocol()
+    {
+        if (FrameEnableCheck.IsChecked != true)
+        {
+            _monitor.SetFrameParser(null);
+            return;
+        }
+
+        // 帧头/帧尾 HEX 非法时按空处理（输入过程中的中间态也不会报错打断）
+        _monitor.SetFrameParser(new FrameParser
+        {
+            Header = SendCodec.ParseHex(FrameHeaderEdit.Text) ?? [],
+            Tail = SendCodec.ParseHex(FrameTailEdit.Text) ?? [],
+            LengthSize = (FrameLengthCombo.SelectedValue as int?) ?? 0,
+            LengthBase = int.TryParse(FrameLengthBaseEdit.Text.Trim(), out var lb) ? lb : 0,
+            BigEndian = (FrameEndianCombo.SelectedValue as bool?) ?? true,
+            Checksum = FrameParser.ParseChecksum(FrameChecksumCombo.SelectedValue as string),
+        });
+    }
+
     private void CopySelection()
     {
         if (LogText.SelectionLength <= 0)
@@ -954,8 +1070,24 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         }
         else
         {
+            data = SendCodec.ParseEscaped(text, _encoding);
+        }
+
+        // 发送自动算校验：追加在换行之前
+        var checksumKey = ChecksumCombo.SelectedValue as string ?? ChecksumKeys.None;
+        if (checksumKey != ChecksumKeys.None)
+        {
+            data = [.. data, .. FrameParser.ChecksumBytes(FrameParser.ParseChecksum(checksumKey), data)];
+        }
+
+        // 文本模式追加换行（HEX 模式不加，且换行永远在校验之后）
+        if (HexSendCheck.IsChecked != true)
+        {
             var newline = NewlineCombo.SelectedValue as string ?? "";
-            data = [.. SendCodec.ParseEscaped(text, _encoding), .. _encoding.GetBytes(newline)];
+            if (newline.Length > 0)
+            {
+                data = [.. data, .. _encoding.GetBytes(newline)];
+            }
         }
 
         if (!_monitor.IsConnected)

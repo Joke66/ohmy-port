@@ -71,6 +71,7 @@
 - `Feed(data)`：喂入字节流返回能切出的所有完整帧；`ExtractOne` 先找帧头（保留可能的前缀尾巴），再按长度或帧尾定界。
 - 校验算法：`Sum8`（和取低 8 位）、`Xor8`（异或）、`Crc16Modbus`（多项式 0xA001、初值 0xFFFF、结果低字节在前比较）。
 - `ParseChecksum(value)`：字符串（none/sum8/xor8/crc16_modbus）→ 枚举。
+- `ChecksumBytes(kind, data)`：计算校验字节（发送侧自动追加 / 校验计算器共用），CRC16-Modbus 低字节在前；配套 `ChecksumKeys` 常量类提供配置键。
 - 注意：线程不安全，需在单一接收线程内使用（与 Python 版一致）。
 
 ## 10. 端口枚举 — `Serial/PortEnumerator.cs`
@@ -95,5 +96,4 @@
 
 ## 13. 待接线（后续里程碑）
 
-- `FrameParser` / `SetFrameParser`：Core 已完整，App 未提供协议设置面板，接收仍按行切分。
-- `PlotRule`：Core 已完整，App 未实现绘图窗口（M7）。
+- `PlotRule`：Core 已完整，App 未实现绘图窗口（M7）。`FrameParser` 已于第一批接线（协议帧解析面板）。

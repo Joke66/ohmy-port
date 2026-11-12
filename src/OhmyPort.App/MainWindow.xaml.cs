@@ -168,6 +168,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             remembered.FilterMode,
             remembered.FilterCase,
             remembered.FilterEnabled);
+
+        session.ApplyRememberedProtocol(
+            remembered.SendChecksum,
+            remembered.FrameEnabled,
+            remembered.FrameHeader,
+            remembered.FrameTail,
+            remembered.FrameLengthSize,
+            remembered.FrameLengthBase,
+            remembered.FrameBigEndian,
+            remembered.FrameChecksum);
     }
 
     private SessionView? ActiveSession =>
@@ -336,6 +346,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SyncMenuState();
     }
 
+    private void OnToggleProtocolClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveSession is { } session)
+        {
+            session.ProtocolVisible = ProtocolMenu.IsChecked;
+        }
+
+        SyncMenuState();
+    }
+
     private void OnToggleWrapClick(object sender, RoutedEventArgs e)
     {
         _config.WrapEnabled = WrapMenu.IsChecked;
@@ -379,6 +399,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 FilterMenu.IsChecked = on;
                 OnToggleFilterClick(FilterMenu, e);
                 break;
+            case "protocol":
+                ProtocolMenu.IsChecked = on;
+                OnToggleProtocolClick(ProtocolMenu, e);
+                break;
             case "send":
                 SendMenu.IsChecked = on;
                 OnToggleSendClick(SendMenu, e);
@@ -410,6 +434,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             $"{AppInfo.Name} v{AppInfo.Version}\n\n作者：{AppInfo.Author}\n项目主页：{AppInfo.Url}\n\n" +
             "C# / WPF 版本（.NET 10）。",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
+
+    private void OnOpenChecksumCalculatorClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ChecksumCalculatorDialog { Owner = this };
+        dialog.ShowDialog();
+    }
 
     // ---------- 日志记录设置（M8） ----------
 
@@ -1059,6 +1089,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             ParamsMenu.IsChecked = false;
             FilterMenu.IsChecked = false;
+            ProtocolMenu.IsChecked = false;
             SendMenu.IsChecked = true;
             HexViewMenu.IsChecked = false;
             FixedMenu.IsChecked = false;
@@ -1068,6 +1099,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         ParamsMenu.IsChecked = session.ParamsVisible;
         FilterMenu.IsChecked = session.FilterVisible;
+        ProtocolMenu.IsChecked = session.ProtocolVisible;
         SendMenu.IsChecked = session.SendVisible;
         HexViewMenu.IsChecked = session.HexView;
         FixedMenu.IsChecked = session.FixedView;
@@ -1079,6 +1111,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         TbParams.IsChecked = ParamsMenu.IsChecked;
         TbFilter.IsChecked = FilterMenu.IsChecked;
+        TbProtocol.IsChecked = ProtocolMenu.IsChecked;
         TbSend.IsChecked = SendMenu.IsChecked;
         TbSendAssist.IsChecked = SendAssistMenu.IsChecked;
         TbHex.IsChecked = HexViewMenu.IsChecked;
@@ -1173,6 +1206,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 FilterMode = s.FilterModeKey,
                 FilterCase = s.FilterCaseSensitive,
                 FilterEnabled = s.FilterEnabledState,
+                SendChecksum = s.SendChecksumKey,
+                FrameEnabled = s.FrameEnabledState,
+                FrameHeader = s.FrameHeaderText,
+                FrameTail = s.FrameTailText,
+                FrameLengthSize = s.FrameLengthSizeValue,
+                FrameLengthBase = s.FrameLengthBaseValue,
+                FrameBigEndian = s.FrameBigEndianValue,
+                FrameChecksum = s.FrameChecksumKey,
             })
             .ToList();
 

@@ -83,4 +83,36 @@ public class FrameParserTests
         var frame = new byte[] { 6, 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00 };
         AssertFrames(p.Feed(frame), (frame, false));
     }
+
+    [Fact]
+    public void ChecksumBytes_None_ReturnsEmpty()
+    {
+        Assert.Empty(FrameParser.ChecksumBytes(ChecksumKind.None, [1, 2, 3]));
+    }
+
+    [Fact]
+    public void ChecksumBytes_Sum8AndXor8()
+    {
+        Assert.Equal([3], FrameParser.ChecksumBytes(ChecksumKind.Sum8, [1, 2]));
+        Assert.Equal([3], FrameParser.ChecksumBytes(ChecksumKind.Xor8, [1, 2]));
+    }
+
+    [Fact]
+    public void ChecksumBytes_Crc16Modbus_LowByteFirst()
+    {
+        // 01 03 00 00 00 0A → CRC16-Modbus = 0xC5CD，低字节在前
+        Assert.Equal([0xC5, 0xCD],
+            FrameParser.ChecksumBytes(ChecksumKind.Crc16Modbus, [0x01, 0x03, 0x00, 0x00, 0x00, 0x0A]));
+    }
+
+    [Fact]
+    public void ChecksumBytes_RoundTripThroughFeed()
+    {
+        // 校验覆盖 [长度][数据]，帧 = [长度][数据][校验]
+        byte[] body = [6, 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A];
+        var crc = FrameParser.ChecksumBytes(ChecksumKind.Crc16Modbus, body);
+        var frame = body.Concat(crc).ToArray();
+        var p = new FrameParser { LengthSize = 1, Checksum = ChecksumKind.Crc16Modbus };
+        AssertFrames(p.Feed(frame), (frame, true));
+    }
 }
