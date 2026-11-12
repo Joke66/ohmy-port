@@ -1,0 +1,31 @@
+# .NET 构建产物
+bin/
+obj/
+publish/
+TestResults/
+*.user
+*.suo
+.vs/
+.idea/
+
+# 运行时产物（日志 / 用户偏好）
+Logs/
+serial_tool_config.json
+bg_cache/
+background/
+error.log
+
+# 旧版 Python 版本遗留（本分支不跟踪）
+__pycache__/
+.pytest_cache/
+*.py[cod]
+dist/
+release/
+build/
+Output/
+*.spec
+
+# 编辑器
+*.swp
+.vscode/
+.zcode/
