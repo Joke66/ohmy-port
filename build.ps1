@@ -62,6 +62,9 @@ if (Test-Path $greenDir) { Remove-Item $greenDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $greenDir | Out-Null
 Copy-Item (Join-Path $PSScriptRoot "publish\$AppName\*") $greenDir -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "README.md") (Join-Path $greenDir "使用说明.md") -Force
+# 截图随 README 一起进绿色版，保证「使用说明.md」里的图片能显示
+New-Item -ItemType Directory -Force -Path (Join-Path $greenDir "docs") | Out-Null
+Copy-Item (Join-Path $PSScriptRoot "docs\screenshot.png") (Join-Path $greenDir "docs\screenshot.png") -Force
 
 # 绿色版压缩包
 Compress-Archive -Path $greenDir -DestinationPath (Join-Path $releaseDir "${AppName}_v${Version}.zip") -Force

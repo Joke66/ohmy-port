@@ -3,8 +3,20 @@
 Python + PySide6 版本的 C# + WPF 重写分支。**功能目标与原版一致**，用原生 Windows 运行时替代
 PyInstaller 自解压，换取更小的体积和更快的启动。
 
+![OhmyPort 界面](docs/screenshot.png)
+
 - `master` 分支：Python 版本，继续可维护、可发版
 - `wpf` 分支（本分支）：C# / WPF 实现，与 master 无共同祖先
+
+## 功能特性
+
+- **串口调试基础**：多会话标签页、文本/HEX 收发、GBK/UTF-8/ASCII 编码、发送历史、热插拔检测、连接状态指示
+- **日志能力**：时间戳/收发方向着色、HEX 分列 + ASCII 对照、关键词过滤四模式（含正则）、保存/分片/保留策略
+- **协议调试**：协议帧解析（帧头/长度/校验 SUM8/XOR8/CRC16-Modbus）、字段解析（名称|类型|值 表格）、发送自动算校验、独立校验计算器
+- **发送辅助**：命令页、定时循环发送（每条独立延时）、文件下发（HEX/文本行/二进制）
+- **实时曲线**：从日志提取数值绘制波形，自动缩放、断线、图例
+- **个性化**：四套主题、背景皮肤、字体、托盘、会话重命名/复制、窗口记忆、自定义强调色
+- **开源合规**：关于/开源许可（GPL-2.0）/项目主页/检查更新
 
 ## 环境要求
 
@@ -26,19 +38,25 @@ dotnet test
 
 ```
 src/OhmyPort.Core/          纯逻辑（无 UI 依赖，可单测）
-  Constants.cs              常量（波特率、编码、保留策略、性能参数）
-  LogFilter.cs              多关键词过滤 / 高亮
+  Constants.cs              常量（波特率、编码、保留策略、性能参数、时间戳档位）
+  LogFilter.cs              多关键词过滤 / 高亮 / 正则
   TextUtil.cs               数值提取、字节格式化、版本比较
   SendCodec.cs              HEX 与转义字符解析（GBK 需注册代码页提供程序）
+  FileSend.cs               文件发送解析与分块（HEX / 文本行 / 二进制）
+  HexText.cs                HEX 显示格式化（每 16 字节 + ASCII 对照）
+  Logging/LogManager.cs     日志写入 / 分片 / 保留清理
+  Models/                   AppConfig（与旧版 JSON 兼容）、CommandItem、
+                            PlotRule、PlotSeries（曲线数据）、ProtocolField（字段解析）
   Serial/FrameParser.cs     自定义帧协议解析 + SUM8 / XOR8 / CRC16-Modbus
   Serial/SerialMonitor.cs   串口连接、接收线程、按行/按帧切分
   Serial/PortEnumerator.cs  串口枚举 + WMI 友好名
-  Logging/LogManager.cs     日志写入 / 分片 / 保留清理
-  Models/                   AppConfig（与旧版 JSON 兼容）、CommandItem、PlotRule
 src/OhmyPort.App/           WPF 界面
   Controls/LogView.cs       基于 AvalonEdit 的日志控件（批量追加 / 着色 / 高亮 / 行数上限）
+  Controls/PlotCanvas.cs    实时曲线画布（自绘折线 / 网格 / 图例）
   Views/SessionView.xaml    单个串口会话的全部面板
-  Themes/                   Dark.xaml（配色）+ Base.xaml（控件样式）
+  Views/PlotWindow.xaml     实时曲线窗口
+  Views/AboutDialog.xaml    关于对话框（GPL 声明 + 可点击链接）
+  Themes/                   Dark/Light/Eye.xaml（配色）+ Base.xaml（控件样式）
 tests/OhmyPort.Core.Tests/  xUnit（移植自原版 pytest 用例）
 ```
 
@@ -50,10 +68,10 @@ tests/OhmyPort.Core.Tests/  xUnit（移植自原版 pytest 用例）
 | M1 | 串口连接/收发、日志显示、HEX/编码、发送历史、多会话标签页 | ✅ |
 | M2 | 热插拔检测、连接状态指示、配置持久化 | ✅ |
 | M3 | 保存日志、自动换行、字号缩放、Ctrl+F 搜索、上下分栏、暂停/清空/复制 | ✅ |
-| M4 | 关键词过滤四模式（高亮/仅显示/排除/分栏） | ✅ |
+| M4 | 关键词过滤四模式（高亮/仅显示/排除/分栏）+ 正则 | ✅ |
 | M5 | 发送辅助：命令页、定时循环、导入导出 | ✅ |
-| M6 | 协议解析面板 + 自动应答 | ⏳（可选） |
-| M7 | 数值绘图窗口 | ⏳（可选） |
+| M6 | 协议解析面板 + 字段解析 | ✅ |
+| M7 | 实时曲线窗口 | ✅ |
 | M8 | 日志录制 / 分片 / 保留策略 | ✅ |
 | M9 | 四套主题、背景图、字体、托盘 | ✅ |
 | M10 | 打包（dotnet publish + Inno Setup） | ✅ |
@@ -73,6 +91,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 | `OhmyPort_Setup_v<版本>.exe`（~62 MB） | Inno Setup 安装包（需本机装 Inno Setup 6） |
 
 发布实测：单文件 exe 67 MB，冷启动 ~1.6s；文件夹模式（`-p:PublishSingleFile=false`）155 MB、启动 ~1.2s——单文件用启动时间换体积，当前默认单文件。
+
+## 开源许可
+
+本项目依据 [GNU 通用公共许可证（GPL）第 2 版](LICENSE)（或更高版本）发布，为自由软件。完整条款见 `LICENSE`，程序内「帮助 → 开源许可」也可查看。
 
 ## 已知差异
 
