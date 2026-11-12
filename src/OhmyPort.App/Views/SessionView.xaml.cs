@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.IO;
 using System.IO.Ports;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using OhmyPort.App.Controls;
 using OhmyPort.Core;
 using OhmyPort.Core.Serial;
@@ -38,9 +40,10 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private readonly Queue<LogRecord> _buffer = new();
     private readonly DispatcherTimer _flushTimer;
     private readonly DispatcherTimer _hotplugTimer;
-    private readonly List<string> _pausedLines = [];
 
     private HashSet<string> _knownPorts = new(StringComparer.OrdinalIgnoreCase);
+    private LogFilter _filter = new();
+    private bool _filterEnabled;
     private Encoding _encoding = SendCodec.GetEncoding("utf-8");
     private bool _paused;
     private bool _hexView;
@@ -145,8 +148,82 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         set => FixedCheck.IsChecked = value;
     }
 
+    /// <summary>关键词过滤面板是否可见（视图菜单控制）。</summary>
+    public bool FilterVisible
+    {
+        get => FilterPanel.Visibility == Visibility.Visible;
+        set => FilterPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>自动换行开关（主窗口全局设置，应用到主日志区与命中分栏）。</summary>
+    public bool WrapEnabled
+    {
+        get => LogText.WordWrap;
+        set
+        {
+            LogText.WordWrap = value;
+            MatchedText.WordWrap = value;
+        }
+    }
+
+    /// <summary>当前日志字号（配置持久化用）。</summary>
+    public double FontSizeValue => LogText.FontSize;
+
+    public void SetFontSize(double size)
+    {
+        LogText.FontSize = size;
+        MatchedText.FontSize = size;
+    }
+
+    public void ZoomIn(int step = 1)
+    {
+        LogText.ZoomIn(step);
+        MatchedText.ZoomIn(step);
+    }
+
+    public void ZoomOut(int step = 1)
+    {
+        LogText.ZoomOut(step);
+        MatchedText.ZoomOut(step);
+    }
+
+    public void ResetZoom()
+    {
+        LogText.ResetZoom();
+        MatchedText.ResetZoom();
+    }
+
     /// <summary>会话序号变化后刷新标题。</summary>
     public void RefreshTitle() => RaiseTitleChanged();
+
+    // ---------- 过滤持久化（配置保存 / 恢复用） ----------
+
+    public string FilterKeywordsText => KeywordEdit.Text;
+
+    public string FilterModeKey => ModeCombo.SelectedValue as string ?? FilterModes.Highlight;
+
+    public bool FilterCaseSensitive => CaseCheck.IsChecked == true;
+
+    public bool FilterEnabledState => _filterEnabled;
+
+    /// <summary>从配置恢复过滤状态。</summary>
+    public void ApplyRememberedFilter(string keywords, string mode, bool caseSensitive, bool enabled)
+    {
+        KeywordEdit.Text = keywords;
+        if (ModeCombo.Items.Cast<Option>().Any(o => (string)o.Value == mode))
+        {
+            ModeCombo.SelectedValue = mode;
+        }
+
+        CaseCheck.IsChecked = caseSensitive;
+
+        if (enabled)
+        {
+            _filterEnabled = true;
+            FilterButton.Content = "关闭";
+            ApplyFilter();
+        }
+    }
 
     // ---------- 初始化 ----------
 
@@ -192,6 +269,17 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             new Option("DTR/DSR", Handshake.None), new Option("XON/XOFF", Handshake.XOnXOff),
         };
         FlowCombo.SelectedIndex = 0;
+
+        ModeCombo.DisplayMemberPath = nameof(Option.Label);
+        ModeCombo.SelectedValuePath = nameof(Option.Value);
+        ModeCombo.ItemsSource = new[]
+        {
+            new Option("显示全部并高亮", FilterModes.Highlight),
+            new Option("仅显示命中行", FilterModes.Include),
+            new Option("排除命中行", FilterModes.Exclude),
+            new Option("上下分栏显示命中行", FilterModes.Split),
+        };
+        ModeCombo.SelectedIndex = 0;
 
         EncodingCombo.DisplayMemberPath = nameof(Option.Label);
         EncodingCombo.SelectedValuePath = nameof(Option.Value);
@@ -240,6 +328,23 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         HexViewCheck.Checked += (_, _) => SetHexView(true);
         HexViewCheck.Unchecked += (_, _) => SetHexView(false);
 
+        FilterButton.Click += (_, _) => ToggleFilter();
+        ModeCombo.SelectionChanged += (_, _) =>
+        {
+            if (_filterEnabled)
+            {
+                ApplyFilter();
+            }
+        };
+        CaseCheck.Click += (_, _) =>
+        {
+            if (_filterEnabled)
+            {
+                ApplyFilter();
+            }
+        };
+        ClearMatchedButton.Click += (_, _) => ClearMatched();
+
         DtrCheck.Checked += (_, _) => _monitor.SetDtr(true);
         DtrCheck.Unchecked += (_, _) => _monitor.SetDtr(false);
         RtsCheck.Checked += (_, _) => _monitor.SetRts(true);
@@ -247,7 +352,23 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
         CopyMenuItem.Click += (_, _) => CopySelection();
         CopyAllMenuItem.Click += (_, _) => CopyAll();
+        SaveLogMenuItem.Click += (_, _) => SaveLog();
         ClearMenuItem.Click += (_, _) => ClearLog();
+    }
+
+    private void OnKeywordKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            if (!_filterEnabled)
+            {
+                _filterEnabled = true;
+                FilterButton.Content = "关闭";
+            }
+
+            ApplyFilter();
+            e.Handled = true;
+        }
     }
 
     // ---------- 端口 ----------
@@ -385,30 +506,50 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         }
 
         var lines = new List<string>();
+        var matchedLines = new List<string>();
+
         while (_pending.TryDequeue(out var record))
         {
             AppendToBuffer(record);
-            lines.Add(FormatLine(record));
 
+            // 帧校验失败：追加系统提示（sys 不受暂停影响，不参与过滤）
             if (!record.ChecksumOk && record.Data is not null)
             {
                 lines.Add(FormatLine(new LogRecord(record.Time, LogDirection.Sys,
                                                    null, $"帧校验失败: {ToHex(record.Data)}")));
             }
-        }
 
-        if (_paused)
-        {
-            _pausedLines.AddRange(lines);
-            if (_pausedLines.Count > UiDefaults.MaxLines)
+            var text = PayloadText(record);
+            var visible = _filter.Visible(text);
+            var isMatch = _filter.Mode == FilterModes.Split && _filter.Matched(text).Count > 0;
+
+            // 暂停只冻结 rx/tx 显示，sys 仍实时显示；buffer 继续积累，恢复时全量重建
+            if (_paused && record.Direction != LogDirection.Sys)
             {
-                _pausedLines.RemoveRange(0, _pausedLines.Count - UiDefaults.MaxLines);
+                continue;
             }
 
-            return;
+            if (visible)
+            {
+                lines.Add(FormatLine(record));
+            }
+
+            if (isMatch)
+            {
+                matchedLines.Add(FormatLine(record));
+            }
         }
 
-        LogText.AppendLines(lines, FollowTail);
+        if (lines.Count > 0)
+        {
+            LogText.AppendLines(lines, FollowTail);
+        }
+
+        if (matchedLines.Count > 0)
+        {
+            MatchedText.AppendLines(matchedLines, follow: true);
+        }
+
         RaiseStatusChanged();
     }
 
@@ -471,11 +612,53 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         ReRender();
     }
 
-    /// <summary>按当前编码 / HEX 设置重建整个显示区（对应 Python 版 _rerender）。</summary>
+    /// <summary>记录用于过滤判断的文本（按当前编码解码，不受 HEX 显示影响）。</summary>
+    private string PayloadText(LogRecord record)
+    {
+        if (record.Direction == LogDirection.Sys)
+        {
+            return record.Text ?? "";
+        }
+
+        if (record.Data is null)
+        {
+            return "";
+        }
+
+        return _encoding.GetString(record.Data);
+    }
+
+    /// <summary>按当前编码 / HEX / 过滤设置重建整个显示区（对应 Python 版 _rerender）。</summary>
     private void ReRender()
     {
         LogText.ClearAll();
-        LogText.AppendLines(_buffer.Select(FormatLine).ToList(), FollowTail);
+
+        var visibleLines = _buffer
+            .Where(r => _filter.Visible(PayloadText(r)))
+            .Select(FormatLine)
+            .ToList();
+        LogText.AppendLines(visibleLines, FollowTail);
+
+        ReRenderMatched();
+    }
+
+    /// <summary>重建命中结果分栏（split 模式）。</summary>
+    private void ReRenderMatched()
+    {
+        MatchedText.ClearAll();
+        if (_filter.Mode != FilterModes.Split)
+        {
+            return;
+        }
+
+        var matchedLines = _buffer
+            .Where(r => _filter.Matched(PayloadText(r)).Count > 0)
+            .Select(FormatLine)
+            .ToList();
+        if (matchedLines.Count > 0)
+        {
+            MatchedText.AppendLines(matchedLines, follow: true);
+        }
     }
 
     // ---------- 日志操作 ----------
@@ -485,10 +668,9 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         _paused = !_paused;
         PauseButton.Content = _paused ? "继续" : "暂停";
 
-        if (!_paused && _pausedLines.Count > 0)
+        if (!_paused)
         {
-            LogText.AppendLines(_pausedLines, FollowTail);
-            _pausedLines.Clear();
+            ReRender();
         }
     }
 
@@ -500,10 +682,55 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         }
 
         _buffer.Clear();
-        _pausedLines.Clear();
         LogText.ClearAll();
+        MatchedText.ClearAll();
         RaiseStatusChanged();
     }
+
+    // ---------- 过滤 ----------
+
+    private void ToggleFilter()
+    {
+        if (_filterEnabled)
+        {
+            _filterEnabled = false;
+            _filter = new LogFilter();
+            FilterButton.Content = "应用";
+            LogText.SetKeywords([], caseSensitive: false);
+            MatchedText.SetKeywords([], caseSensitive: false);
+            ReRender();
+            MatchedPanel.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            _filterEnabled = true;
+            FilterButton.Content = "关闭";
+            ApplyFilter();
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        if (!_filterEnabled)
+        {
+            return;
+        }
+
+        _filter = new LogFilter(
+            LogFilter.ParseKeywords(KeywordEdit.Text),
+            ModeCombo.SelectedValue as string ?? FilterModes.Highlight,
+            CaseCheck.IsChecked == true);
+
+        LogText.SetKeywords(_filter.Keywords, _filter.CaseSensitive);
+        MatchedText.SetKeywords(_filter.Keywords, _filter.CaseSensitive);
+        ReRender();
+
+        MatchedPanel.Visibility = _filter.Mode == FilterModes.Split
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void ClearMatched() => MatchedText.ClearAll();
 
     private void CopySelection()
     {
@@ -531,6 +758,53 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         {
             AddSystem("复制失败：剪贴板被其它程序占用");
         }
+    }
+
+    public void SaveLog()
+    {
+        if (_buffer.Count == 0)
+        {
+            AddSystem("当前没有可保存的日志");
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "保存串口日志",
+            Filter = "文本文件 (*.txt)|*.txt",
+            FileName = $"{LogBasename}.txt",
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllLines(dialog.FileName, _buffer.Select(FormatRecordLine), new UTF8Encoding(false));
+            AddSystem($"日志已保存: {dialog.FileName}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(Window.GetWindow(this)!, ex.Message, "保存失败",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>日志文件基线名（优先端口名，未连接用 serial）。</summary>
+    private string LogBasename =>
+        (PortCombo.SelectedItem as PortInfo?)?.PortName is { Length: > 0 } port ? port : "serial";
+
+    /// <summary>落盘格式：固定为文本形式，不受「HEX 显示」切换影响（对应 Python 版 _record_line）。</summary>
+    private string FormatRecordLine(LogRecord record)
+    {
+        var ts = record.Time.ToString("HH:mm:ss.fff");
+        return record.Direction switch
+        {
+            LogDirection.Tx => $"[{ts}] {LogView.TxMark}{PayloadText(record)}",
+            LogDirection.Sys => $"[{ts}] {LogView.SysMark}{record.Text}",
+            _ => $"[{ts}] {PayloadText(record)}",
+        };
     }
 
     // ---------- 发送 ----------

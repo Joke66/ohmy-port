@@ -9,6 +9,8 @@
 
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="文件(_F)">
+        <MenuItem Header="保存日志" InputGestureText="Ctrl+S" Click="OnSaveLogClick" />
+        <Separator />
         <MenuItem Header="新建串口会话" InputGestureText="Ctrl+T" Click="OnNewSessionClick" />
         <MenuItem Header="关闭当前会话" Click="OnCloseCurrentSessionClick" />
         <Separator />
@@ -16,10 +18,19 @@
       </MenuItem>
       <MenuItem Header="视图(_V)">
         <MenuItem x:Name="ParamsMenu" Header="串口参数" IsCheckable="True" Click="OnToggleParamsClick" />
+        <MenuItem x:Name="FilterMenu" Header="关键词过滤" IsCheckable="True" Click="OnToggleFilterClick" />
         <MenuItem x:Name="SendMenu" Header="消息发送" IsCheckable="True" IsChecked="True"
                   Click="OnToggleSendClick" />
+        <Separator />
         <MenuItem x:Name="HexViewMenu" Header="HEX 显示" IsCheckable="True" Click="OnToggleHexViewClick" />
         <MenuItem x:Name="FixedMenu" Header="固定显示" IsCheckable="True" Click="OnToggleFixedClick" />
+        <MenuItem x:Name="WrapMenu" Header="自动换行" IsCheckable="True" IsChecked="True"
+                  Click="OnToggleWrapClick" />
+      </MenuItem>
+      <MenuItem Header="设置(_S)">
+        <MenuItem Header="字体增大" InputGestureText="Ctrl+=" Click="OnZoomInClick" />
+        <MenuItem Header="字体减小" InputGestureText="Ctrl+-" Click="OnZoomOutClick" />
+        <MenuItem Header="重置字体" InputGestureText="Ctrl+0" Click="OnResetZoomClick" />
       </MenuItem>
       <MenuItem Header="帮助(_H)">
         <MenuItem Header="关于 OhmyPort" Click="OnAboutClick" />

@@ -9,6 +9,13 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 压测入口：不加载主界面，直接灌数据测性能
+        if (e.Args.Contains("--stress", StringComparer.OrdinalIgnoreCase))
+        {
+            StressTest.Run();
+            return;
+        }
+
         // GBK 等代码页编码需要显式注册（.NET Core 起默认不含）
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 

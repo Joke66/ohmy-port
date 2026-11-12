@@ -1,10 +1,12 @@
 using System.Text;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Editing;
 using ICSharpCode.AvalonEdit.Rendering;
+using ICSharpCode.AvalonEdit.Search;
 
 namespace OhmyPort.App.Controls;
 
@@ -39,7 +41,41 @@ public sealed class LogView : TextEditor
         Document.UndoStack.SizeLimit = 0;
         TextArea.TextView.LineTransformers.Add(_colorizer);
         SyntaxHighlighting = null;
+
+        // 内置查找面板：Ctrl+F 打开、F3 下一个、Shift+F3 上一个、Esc 关闭
+        SearchPanel.Install(this);
+
+        // Ctrl+滚轮缩放字体（与 Python 版一致）
+        PreviewMouseWheel += OnPreviewMouseWheel;
     }
+
+    /// <summary>默认字号（与 Python 版 _DEFAULT_FONT_SIZE=11 对应，WPF 用 12 更接近视觉）。</summary>
+    public const double DefaultFontSize = 12;
+
+    private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        {
+            return;
+        }
+
+        if (e.Delta > 0)
+        {
+            ZoomIn();
+        }
+        else
+        {
+            ZoomOut();
+        }
+
+        e.Handled = true;
+    }
+
+    public void ZoomIn(int step = 1) => FontSize = Math.Min(FontSize + step, 72);
+
+    public void ZoomOut(int step = 1) => FontSize = Math.Max(FontSize - step, 6);
+
+    public void ResetZoom() => FontSize = DefaultFontSize;
 
     /// <summary>最多保留的行数，超出从头部丢弃。</summary>
     public int MaxLines { get; set; } = 50_000;

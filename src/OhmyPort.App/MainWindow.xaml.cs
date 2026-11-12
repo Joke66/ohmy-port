@@ -35,6 +35,13 @@ public partial class MainWindow : Window
         {
             ApplyRememberedState(_sessions[i], _config.Sessions[i]);
         }
+
+        // 全局：自动换行
+        WrapMenu.IsChecked = _config.WrapEnabled;
+        foreach (var session in _sessions)
+        {
+            session.WrapEnabled = _config.WrapEnabled;
+        }
     }
 
     private static void ApplyRememberedState(SessionView session, SessionConfig remembered)
@@ -48,6 +55,17 @@ public partial class MainWindow : Window
         {
             session.BaudText = remembered.Baud;
         }
+
+        if (remembered.FontSize > 0)
+        {
+            session.SetFontSize(remembered.FontSize);
+        }
+
+        session.ApplyRememberedFilter(
+            remembered.FilterKeywords,
+            remembered.FilterMode,
+            remembered.FilterCase,
+            remembered.FilterEnabled);
     }
 
     private SessionView? ActiveSession =>
@@ -106,10 +124,33 @@ public partial class MainWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.T && Keyboard.Modifiers == ModifierKeys.Control)
+        if (Keyboard.Modifiers != ModifierKeys.Control)
         {
-            AddSession();
-            e.Handled = true;
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.T:
+                AddSession();
+                e.Handled = true;
+                break;
+            case Key.S:
+                ActiveSession?.SaveLog();
+                e.Handled = true;
+                break;
+            case Key.OemPlus:          // Ctrl+= / Ctrl++（= 与 + 共用一键）
+                ActiveSession?.ZoomIn();
+                e.Handled = true;
+                break;
+            case Key.OemMinus:         // Ctrl+-
+                ActiveSession?.ZoomOut();
+                e.Handled = true;
+                break;
+            case Key.D0:               // Ctrl+0
+                ActiveSession?.ResetZoom();
+                e.Handled = true;
+                break;
         }
     }
 
@@ -165,6 +206,33 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnSaveLogClick(object sender, RoutedEventArgs e) => ActiveSession?.SaveLog();
+
+    private void OnToggleFilterClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveSession is { } session)
+        {
+            session.FilterVisible = FilterMenu.IsChecked;
+        }
+    }
+
+    private void OnToggleWrapClick(object sender, RoutedEventArgs e)
+    {
+        _config.WrapEnabled = WrapMenu.IsChecked;
+        foreach (var session in _sessions)
+        {
+            session.WrapEnabled = _config.WrapEnabled;
+        }
+
+        _configService.Save(_config);
+    }
+
+    private void OnZoomInClick(object sender, RoutedEventArgs e) => ActiveSession?.ZoomIn();
+
+    private void OnZoomOutClick(object sender, RoutedEventArgs e) => ActiveSession?.ZoomOut();
+
+    private void OnResetZoomClick(object sender, RoutedEventArgs e) => ActiveSession?.ResetZoom();
+
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
 
     private void OnAboutClick(object sender, RoutedEventArgs e) =>
@@ -178,9 +246,12 @@ public partial class MainWindow : Window
 
     private void SyncMenuState()
     {
+        WrapMenu.IsChecked = _config.WrapEnabled;
+
         if (ActiveSession is not { } session)
         {
             ParamsMenu.IsChecked = false;
+            FilterMenu.IsChecked = false;
             SendMenu.IsChecked = true;
             HexViewMenu.IsChecked = false;
             FixedMenu.IsChecked = false;
@@ -188,6 +259,7 @@ public partial class MainWindow : Window
         }
 
         ParamsMenu.IsChecked = session.ParamsVisible;
+        FilterMenu.IsChecked = session.FilterVisible;
         SendMenu.IsChecked = session.SendVisible;
         HexViewMenu.IsChecked = session.HexView;
         FixedMenu.IsChecked = session.FixedView;
@@ -219,13 +291,18 @@ public partial class MainWindow : Window
 
     private void SaveConfig()
     {
+        _config.WrapEnabled = WrapMenu.IsChecked;
         _config.Sessions = _sessions
             .Select(s => new SessionConfig
             {
                 Port = s.SelectedPort,
                 Baud = s.BaudText,
-                FontSize = 11,
+                FontSize = (int)Math.Round(s.FontSizeValue),
                 CustomBauds = [],
+                FilterKeywords = s.FilterKeywordsText,
+                FilterMode = s.FilterModeKey,
+                FilterCase = s.FilterCaseSensitive,
+                FilterEnabled = s.FilterEnabledState,
             })
             .ToList();
 

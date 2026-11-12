@@ -11,6 +11,7 @@
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
     <!-- 端口连接配置 -->
@@ -41,11 +42,18 @@
                 IsChecked="True" />
     </StackPanel>
 
-    <!-- 显示设置（M4 会并入关键词过滤行） -->
-    <StackPanel Grid.Row="2" Margin="0,0,0,4" Orientation="Horizontal">
-      <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="编码" />
+    <!-- 关键词过滤（默认隐藏，视图菜单里打开；含编码与 HEX 显示） -->
+    <StackPanel x:Name="FilterPanel" Grid.Row="2" Margin="0,0,0,4" Orientation="Horizontal"
+                Visibility="Collapsed">
+      <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="关键词" />
+      <TextBox x:Name="KeywordEdit" Width="220" ToolTip="多个关键词用逗号/空格分隔，如 Err,Timeout,0x50"
+               KeyDown="OnKeywordKeyDown" />
+      <ComboBox x:Name="ModeCombo" Width="150" Margin="6,0,0,0" />
+      <CheckBox x:Name="CaseCheck" Margin="10,0,0,0" VerticalAlignment="Center" Content="区分大小写" />
+      <TextBlock Margin="14,0,6,0" VerticalAlignment="Center" Text="编码" />
       <ComboBox x:Name="EncodingCombo" Width="90" />
       <CheckBox x:Name="HexViewCheck" Margin="12,0,0,0" VerticalAlignment="Center" Content="HEX显示" />
+      <Button x:Name="FilterButton" Margin="12,0,0,0" Content="应用" ToolTip="启用 / 关闭关键词过滤" />
     </StackPanel>
 
     <!-- 日志区 -->
@@ -56,6 +64,7 @@
           <ContextMenu>
             <MenuItem x:Name="CopyMenuItem" Header="复制选中" InputGestureText="Ctrl+C" />
             <MenuItem x:Name="CopyAllMenuItem" Header="复制全部" />
+            <MenuItem x:Name="SaveLogMenuItem" Header="保存日志" InputGestureText="Ctrl+S" />
             <Separator />
             <MenuItem x:Name="ClearMenuItem" Header="清空显示" />
           </ContextMenu>
@@ -63,8 +72,25 @@
       </controls:LogView>
     </Border>
 
+    <!-- 命中结果分栏（split 模式显示） -->
+    <Border x:Name="MatchedPanel" Grid.Row="4" Margin="0,4,0,0" Background="{StaticResource Brush.LogBackground}"
+            BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3"
+            Visibility="Collapsed">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Margin="8,3,8,3" Orientation="Horizontal">
+          <TextBlock VerticalAlignment="Center" Text="命中结果" />
+          <Button x:Name="ClearMatchedButton" Margin="8,0,0,0" Content="清空" />
+        </StackPanel>
+        <controls:LogView x:Name="MatchedText" Grid.Row="1" MaxLines="50000" MinHeight="140" />
+      </Grid>
+    </Border>
+
     <!-- 日志操作行 -->
-    <StackPanel Grid.Row="4" Margin="0,4,0,4" Orientation="Horizontal">
+    <StackPanel Grid.Row="5" Margin="0,4,0,4" Orientation="Horizontal">
       <Button x:Name="ConnectButton" Content="打开串口" Tag="primary" ToolTip="打开 / 关闭当前串口" />
       <Button x:Name="PauseButton" Margin="6,0,0,0" Content="暂停"
               ToolTip="暂停刷新显示（后台仍持续接收、缓冲）" />
@@ -76,7 +102,7 @@
     </StackPanel>
 
     <!-- 消息发送 -->
-    <Grid x:Name="SendPanel" Grid.Row="5">
+    <Grid x:Name="SendPanel" Grid.Row="6">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />
