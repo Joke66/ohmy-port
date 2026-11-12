@@ -7,7 +7,7 @@
 
 OhmyPort 是一个 Windows 串口调试助手，C# / WPF 实现（.NET 10）。它是 Python + PySide6 原版（master 分支）的 C# 重写分支（wpf 分支），功能目标与原版一致：用原生 Windows 运行时替代 PyInstaller 自解压，换取更小体积与更快启动。
 
-核心能力：多串口会话、文本/HEX 收发、关键词过滤四模式、命令页 + 定时循环发送、日志录制/分片/保留、四套主题/背景皮肤/托盘。
+核心能力：多串口会话、文本/HEX 收发、关键词过滤四模式、协议帧解析 + 字段解析、发送自动算校验、命令页 + 定时循环发送、日志录制/分片/保留、四套主题/背景皮肤/托盘。
 
 模块边界：
 
@@ -59,6 +59,7 @@ src/OhmyPort.Core/                  纯逻辑层（无 UI）
 ├── Models/AppConfig.cs             应用配置模型（与旧版 JSON 兼容）+ Normalize 校验
 ├── Models/CommandItem.cs           命令项 + 命令页解析（CommandPages）
 ├── Models/PlotRule.cs              数值提取规则（正则捕获组 / 关键词取数字）
+├── Models/ProtocolField.cs         协议字段类型表 + 字段定义 + 帧内字段解码器（ProtocolDecoder）
 └── Serial/
     ├── FrameParser.cs              自定义帧协议解析（帧头/长度/校验 SUM8/XOR8/CRC16-Modbus）
     ├── PortEnumerator.cs           串口枚举 + WMI 友好名
@@ -78,6 +79,8 @@ src/OhmyPort.App/                   WPF 界面层
     ├── CommandPageContent.cs       命令页内容（4 列按钮网格）
     ├── CommandEditDialog.xaml / .xaml.cs   命令编辑对话框（添加/编辑/重命名页）
     ├── CycleDialog.xaml / .xaml.cs 定时循环发送设置
+    ├── ChecksumCalculatorDialog.cs 校验计算器（SUM8/XOR8/CRC16-Modbus）
+    ├── ProtocolFieldDialog.xaml / .xaml.cs 协议字段编辑（名称/偏移/类型/系数）
     ├── BackgroundDialog.cs         背景皮肤对话框
     ├── CloseConfirmDialog.cs       关闭确认（托盘/退出/不再提示）
     ├── ComboSelectDialog.cs        下拉选择对话框（保留策略/字体）
@@ -85,6 +88,7 @@ src/OhmyPort.App/                   WPF 界面层
 tests/OhmyPort.Core.Tests/          xUnit（移植自原版 pytest）
 ├── CommandPagesTests.cs / FrameParserTests.cs / LogFilterTests.cs
 ├── PlotRuleTests.cs / SendCodecTests.cs / TextUtilTests.cs
+├── AppConfigTests.cs / ProtocolDecoderTests.cs
 ```
 
 ## 5. 架构概要

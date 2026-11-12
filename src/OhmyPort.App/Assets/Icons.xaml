@@ -50,6 +50,7 @@
   <!-- ============ 工具 ============ -->
   <Geometry x:Key="Icon.protocol">M 5,4 H 19 V 20 H 5 Z M 5,9 H 19 M 5,15 H 13</Geometry>
   <Geometry x:Key="Icon.calc">M 5,3 H 19 V 21 H 5 Z M 8,7 H 16 M 8,12 H 8.1 M 12,12 H 12.1 M 16,12 H 16.1 M 8,16 H 8.1 M 12,16 H 12.1 M 16,16 H 16.1</Geometry>
+  <Geometry x:Key="Icon.fields">M 4,5 H 20 M 4,12 H 20 M 4,19 H 20 M 9,3 V 7 M 15,10 V 14 M 9,17 V 21</Geometry>
 
   <!-- ============ 图标样式 ============ -->
   <!-- Stretch 会把几何放大到 16×16，描边随之缩放，视觉粗细约 1.4px -->

@@ -1,0 +1,88 @@
+<Window x:Class="OhmyPort.App.Views.ProtocolFieldDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="协议字段" Width="800" Height="480"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        Style="{StaticResource Theme.Window}"
+        ShowInTaskbar="False">
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap"
+               Foreground="{DynamicResource Brush.Muted}"
+               Text="偏移相对「数据区起始」（帧头 + 长度字段之后）。物理值 = 原始值 × 系数 + 偏移量；长度只对 hex / ascii 生效。" />
+
+    <Grid Grid.Row="1" Margin="0,0,0,4">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="150" />
+        <ColumnDefinition Width="64" />
+        <ColumnDefinition Width="104" />
+        <ColumnDefinition Width="60" />
+        <ColumnDefinition Width="56" />
+        <ColumnDefinition Width="74" />
+        <ColumnDefinition Width="74" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="名称" Foreground="{DynamicResource Brush.Muted}" />
+      <TextBlock Grid.Column="1" Text="偏移" Foreground="{DynamicResource Brush.Muted}" />
+      <TextBlock Grid.Column="2" Text="类型" Foreground="{DynamicResource Brush.Muted}" />
+      <TextBlock Grid.Column="3" Text="长度" Foreground="{DynamicResource Brush.Muted}" />
+      <TextBlock Grid.Column="4" Text="大端" Foreground="{DynamicResource Brush.Muted}" />
+      <TextBlock Grid.Column="5" Text="系数" Foreground="{DynamicResource Brush.Muted}" />
+      <TextBlock Grid.Column="6" Text="偏移量" Foreground="{DynamicResource Brush.Muted}" />
+    </Grid>
+
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+      <ItemsControl x:Name="FieldList">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Grid Margin="0,2">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="150" />
+                <ColumnDefinition Width="64" />
+                <ColumnDefinition Width="104" />
+                <ColumnDefinition Width="60" />
+                <ColumnDefinition Width="56" />
+                <ColumnDefinition Width="74" />
+                <ColumnDefinition Width="74" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <TextBox Grid.Column="0" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBox Grid.Column="1" Margin="4,0,0,0"
+                       Text="{Binding OffsetText, UpdateSourceTrigger=PropertyChanged}" />
+              <ComboBox Grid.Column="2" Margin="4,0,0,0" SelectedValuePath="Key"
+                        DisplayMemberPath="Label"
+                        ItemsSource="{Binding TypeOptions}"
+                        SelectedValue="{Binding TypeKey, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBox Grid.Column="3" Margin="4,0,0,0"
+                       Text="{Binding LengthText, UpdateSourceTrigger=PropertyChanged}" />
+              <CheckBox Grid.Column="4" Margin="4,0,0,0" HorizontalAlignment="Center"
+                        VerticalAlignment="Center" IsChecked="{Binding BigEndian}" />
+              <TextBox Grid.Column="5" Margin="4,0,0,0"
+                       Text="{Binding ScaleText, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBox Grid.Column="6" Margin="4,0,0,0"
+                       Text="{Binding BiasText, UpdateSourceTrigger=PropertyChanged}" />
+              <Button Grid.Column="7" Margin="8,0,0,0" HorizontalAlignment="Left" Content="删除"
+                      Click="OnDeleteRowClick" Tag="{Binding}" />
+            </Grid>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <Grid Grid.Row="3" Margin="0,12,0,0">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+        <Button Content="添加字段" Click="OnAddRowClick" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button Content="确定" Tag="primary" Width="80" Margin="0,0,8,0" Click="OnOkClick" />
+        <Button Content="取消" Width="80" Click="OnCancelClick" />
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>

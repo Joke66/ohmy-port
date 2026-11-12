@@ -43,6 +43,8 @@
                   app:IconGlyph.Name="filter" Click="OnToggleFilterClick" />
         <MenuItem x:Name="ProtocolMenu" Header="协议帧解析" IsCheckable="True"
                   app:IconGlyph.Name="protocol" Click="OnToggleProtocolClick" />
+        <MenuItem x:Name="FieldsMenu" Header="字段解析" IsCheckable="True"
+                  app:IconGlyph.Name="fields" Click="OnToggleFieldsClick" />
         <MenuItem x:Name="SendMenu" Header="消息发送" IsCheckable="True" IsChecked="True"
                   app:IconGlyph.Name="message" Click="OnToggleSendClick" />
         <MenuItem x:Name="SendAssistMenu" Header="发送辅助" IsCheckable="True"
@@ -115,6 +117,10 @@
         <ToggleButton x:Name="TbProtocol" Tag="protocol" Style="{StaticResource ToolStrip.Toggle}"
                       ToolTip="协议帧解析" Click="OnToolbarToggleClick">
           <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.protocol}" />
+        </ToggleButton>
+        <ToggleButton x:Name="TbFields" Tag="fields" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="字段解析" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.fields}" />
         </ToggleButton>
         <ToggleButton x:Name="TbSend" Tag="send" Style="{StaticResource ToolStrip.Toggle}"
                       ToolTip="消息发送" Click="OnToolbarToggleClick">

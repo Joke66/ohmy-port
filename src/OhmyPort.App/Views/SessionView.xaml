@@ -13,6 +13,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
     <!-- 端口连接配置 -->
@@ -74,6 +75,8 @@
       <ComboBox x:Name="FrameEndianCombo" Width="66" ToolTip="长度字段的字节序" />
       <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="校验" />
       <ComboBox x:Name="FrameChecksumCombo" Width="108" ToolTip="校验算法（覆盖帧头+长度+数据）" />
+      <Button x:Name="EditFieldsButton" Margin="10,0,0,0" Content="字段..."
+              ToolTip="编辑协议字段（名称 / 偏移 / 类型 / 系数）" />
     </StackPanel>
 
     <!-- 日志区 -->
@@ -92,8 +95,70 @@
       </controls:LogView>
     </Border>
 
+    <!-- 帧字段解析结果（默认隐藏，视图菜单「字段解析」打开） -->
+    <Border x:Name="FieldsPanel" Grid.Row="5" Margin="0,4,0,0"
+            Background="{DynamicResource Brush.LogSurface}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3"
+            Visibility="Collapsed">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="8,3,8,3" Orientation="Horizontal">
+          <TextBlock VerticalAlignment="Center" Text="帧字段" />
+          <TextBlock x:Name="FieldsHint" Margin="8,0,0,0" VerticalAlignment="Center"
+                     Foreground="{DynamicResource Brush.Muted}" Text="（等待数据）" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="8,2,8,2">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="140" />
+            <ColumnDefinition Width="90" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="180" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="名称" Foreground="{DynamicResource Brush.Muted}" />
+          <TextBlock Grid.Column="1" Text="类型" Foreground="{DynamicResource Brush.Muted}" />
+          <TextBlock Grid.Column="2" Text="值" Foreground="{DynamicResource Brush.Muted}" />
+          <TextBlock Grid.Column="3" Text="原始 HEX" Foreground="{DynamicResource Brush.Muted}" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="2" MaxHeight="150" VerticalScrollBarVisibility="Auto">
+          <ItemsControl x:Name="FieldsList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="8,1,8,1">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="90" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="180" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="1" Text="{Binding TypeLabel}"
+                             Foreground="{DynamicResource Brush.Muted}" />
+                  <TextBlock x:Name="ValueText" Grid.Column="2" Text="{Binding Text}" />
+                  <TextBlock Grid.Column="3" Text="{Binding RawHex}"
+                             Foreground="{DynamicResource Brush.Muted}" />
+                </Grid>
+                <DataTemplate.Triggers>
+                  <DataTrigger Binding="{Binding Ok}" Value="False">
+                    <Setter TargetName="ValueText" Property="Foreground"
+                            Value="{DynamicResource Brush.Danger}" />
+                  </DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Grid>
+    </Border>
+
     <!-- 命中结果分栏（split 模式显示） -->
-    <Border x:Name="MatchedPanel" Grid.Row="5" Margin="0,4,0,0" Background="{DynamicResource Brush.LogSurface}"
+    <Border x:Name="MatchedPanel" Grid.Row="6" Margin="0,4,0,0" Background="{DynamicResource Brush.LogSurface}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3"
             Visibility="Collapsed">
       <Grid>
@@ -110,7 +175,7 @@
     </Border>
 
     <!-- 日志操作行 -->
-    <StackPanel Grid.Row="6" Margin="0,4,0,4" Orientation="Horizontal">
+    <StackPanel Grid.Row="7" Margin="0,4,0,4" Orientation="Horizontal">
       <Button x:Name="ConnectButton" Content="打开串口" Tag="primary" ToolTip="打开 / 关闭当前串口" />
       <Button x:Name="PauseButton" Margin="6,0,0,0" Content="暂停"
               ToolTip="暂停刷新显示（后台仍持续接收、缓冲）" />
@@ -122,7 +187,7 @@
     </StackPanel>
 
     <!-- 消息发送 -->
-    <Grid x:Name="SendPanel" Grid.Row="7">
+    <Grid x:Name="SendPanel" Grid.Row="8">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />

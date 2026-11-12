@@ -32,6 +32,9 @@ public sealed class SessionConfig
     public int FrameLengthBase { get; set; }
     public bool FrameBigEndian { get; set; } = true;
     public string FrameChecksum { get; set; } = ChecksumKeys.None;
+
+    /// <summary>协议字段定义（按帧解析时把数据区解成结构化表格）。</summary>
+    public List<ProtocolField> ProtocolFields { get; set; } = [];
 }
 
 /// <summary>
@@ -149,6 +152,29 @@ public sealed class AppConfig
             s.FrameLengthBase = Math.Clamp(s.FrameLengthBase, -65536, 65536);
             s.FrameHeader ??= "";
             s.FrameTail ??= "";
+
+            s.ProtocolFields ??= [];
+            s.ProtocolFields = s.ProtocolFields
+                .Where(f => f is not null)
+                .Select(f =>
+                {
+                    f.Type = FieldTypes.IsValid(f.Type) ? f.Type : FieldTypes.UInt8;
+                    f.Name ??= "";
+                    f.Offset = Math.Clamp(f.Offset, 0, 65535);
+                    f.Length = Math.Clamp(f.Length, 1, 4096);
+                    if (double.IsNaN(f.Scale) || double.IsInfinity(f.Scale))
+                    {
+                        f.Scale = 1;
+                    }
+
+                    if (double.IsNaN(f.Bias) || double.IsInfinity(f.Bias))
+                    {
+                        f.Bias = 0;
+                    }
+
+                    return f;
+                })
+                .ToList();
 
             s.CustomBauds ??= [];
             s.Port = string.IsNullOrEmpty(s.Port) ? null : s.Port;

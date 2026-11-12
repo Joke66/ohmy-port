@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using OhmyPort.App.Controls;
 using OhmyPort.Core;
+using OhmyPort.Core.Models;
 using OhmyPort.Core.Serial;
 using SerialFrame = OhmyPort.Core.Serial.Frame;
 
@@ -51,6 +52,17 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private long _txBytes;
     private string _connectedPort = "";
     private string? _rememberedPort;
+
+    /// <summary>协议字段定义（按帧解析后用于结构化显示）。</summary>
+    private List<ProtocolField> _protocolFields = [];
+
+    /// <summary>数据区在帧内的起始下标（帧头 + 长度字段长度），字段偏移以此为准。</summary>
+    private int _frameDataOffset;
+
+    /// <summary>最近一帧（Rx），用于字段解析显示。</summary>
+    private byte[]? _latestFrame;
+    private bool _fieldsDirty;
+    private long _lastFieldsRefreshTicks;
 
     /// <summary>日志保存目录（由主窗口注入并同步）。</summary>
     public string LogDirectory { get; set; } = AppPaths.DefaultLogDir;
@@ -172,6 +184,20 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         set => ProtocolPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>帧字段解析结果面板是否可见（视图菜单控制）。</summary>
+    public bool FieldsVisible
+    {
+        get => FieldsPanel.Visibility == Visibility.Visible;
+        set
+        {
+            FieldsPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            if (value)
+            {
+                RefreshFields();
+            }
+        }
+    }
+
     /// <summary>自动换行开关（主窗口全局设置，应用到主日志区与命中分栏）。</summary>
     public bool WrapEnabled
     {
@@ -234,13 +260,44 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     public bool FrameBigEndianValue => (FrameEndianCombo.SelectedValue as bool?) ?? true;
     public string FrameChecksumKey => FrameChecksumCombo.SelectedValue as string ?? ChecksumKeys.None;
 
+    /// <summary>协议字段快照（配置持久化用）。</summary>
+    public List<ProtocolField> ProtocolFieldsSnapshot => _protocolFields
+        .Select(f => new ProtocolField
+        {
+            Name = f.Name,
+            Offset = f.Offset,
+            Type = f.Type,
+            BigEndian = f.BigEndian,
+            Length = f.Length,
+            Scale = f.Scale,
+            Bias = f.Bias,
+        })
+        .ToList();
+
     /// <summary>从配置恢复协议帧解析与发送校验状态。</summary>
     public void ApplyRememberedProtocol(string sendChecksum, bool frameEnabled, string frameHeader,
-        string frameTail, int frameLengthSize, int frameLengthBase, bool frameBigEndian, string frameChecksum)
+        string frameTail, int frameLengthSize, int frameLengthBase, bool frameBigEndian,
+        string frameChecksum, IEnumerable<ProtocolField>? fields = null)
     {
         if (ChecksumCombo.Items.Cast<Option>().Any(o => (string)o.Value == sendChecksum))
         {
             ChecksumCombo.SelectedValue = sendChecksum;
+        }
+
+        _protocolFields = fields?.Where(f => f is not null).Select(f => new ProtocolField
+        {
+            Name = f.Name,
+            Offset = f.Offset,
+            Type = f.Type,
+            BigEndian = f.BigEndian,
+            Length = f.Length,
+            Scale = f.Scale,
+            Bias = f.Bias,
+        }).ToList() ?? [];
+
+        if (_protocolFields.Count > 0)
+        {
+            FieldsPanel.Visibility = Visibility.Visible;
         }
 
         FrameEnableCheck.IsChecked = frameEnabled;
@@ -425,6 +482,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         HexViewCheck.Unchecked += (_, _) => SetHexView(false);
 
         FilterButton.Click += (_, _) => ToggleFilter();
+        EditFieldsButton.Click += (_, _) => EditProtocolFields();
         ModeCombo.SelectionChanged += (_, _) =>
         {
             if (_filterEnabled)
@@ -627,6 +685,13 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         {
             AppendToBuffer(record);
 
+            // 记住最近一帧，供协议字段解析使用
+            if (record is { Direction: LogDirection.Rx, Data: not null })
+            {
+                _latestFrame = record.Data;
+                _fieldsDirty = true;
+            }
+
             // 记录到文件（固定文本形式，不受 HEX 显示 / 过滤影响）
             if (_logmgr.IsOpen)
             {
@@ -669,6 +734,11 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         if (matchedLines.Count > 0)
         {
             MatchedText.AppendLines(matchedLines, follow: true);
+        }
+
+        if (_fieldsDirty)
+        {
+            MaybeRefreshFields();
         }
 
         // 分片 / 错误处理（与 Python 版一致，drain 之后统一处理）
@@ -820,6 +890,8 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         _buffer.Clear();
         LogText.ClearAll();
         MatchedText.ClearAll();
+        _latestFrame = null;
+        RefreshFields();
         RaiseStatusChanged();
     }
 
@@ -935,19 +1007,101 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         if (FrameEnableCheck.IsChecked != true)
         {
             _monitor.SetFrameParser(null);
+            _frameDataOffset = 0;
+            _latestFrame = null;
+            RefreshFields();
             return;
         }
 
         // 帧头/帧尾 HEX 非法时按空处理（输入过程中的中间态也不会报错打断）
+        var header = SendCodec.ParseHex(FrameHeaderEdit.Text) ?? [];
+        var lengthSize = (FrameLengthCombo.SelectedValue as int?) ?? 0;
+        _frameDataOffset = header.Length + lengthSize;
+
         _monitor.SetFrameParser(new FrameParser
         {
-            Header = SendCodec.ParseHex(FrameHeaderEdit.Text) ?? [],
+            Header = header,
             Tail = SendCodec.ParseHex(FrameTailEdit.Text) ?? [],
-            LengthSize = (FrameLengthCombo.SelectedValue as int?) ?? 0,
+            LengthSize = lengthSize,
             LengthBase = int.TryParse(FrameLengthBaseEdit.Text.Trim(), out var lb) ? lb : 0,
             BigEndian = (FrameEndianCombo.SelectedValue as bool?) ?? true,
             Checksum = FrameParser.ParseChecksum(FrameChecksumCombo.SelectedValue as string),
         });
+
+        RefreshFields();
+    }
+
+    /// <summary>编辑协议字段（名称 / 偏移 / 类型 / 系数）。</summary>
+    private void EditProtocolFields()
+    {
+        var dialog = new ProtocolFieldDialog(_protocolFields) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _protocolFields = dialog.Result;
+        if (_protocolFields.Count > 0)
+        {
+            FieldsPanel.Visibility = Visibility.Visible;
+        }
+
+        RefreshFields();
+        AddSystem(_protocolFields.Count > 0
+            ? $"协议字段已设为 {_protocolFields.Count} 个"
+            : "协议字段已清空");
+    }
+
+    /// <summary>
+    /// 限速刷新字段表：面板不可见时不解码；可见时最多每 150ms 重建一次行。
+    /// （ItemsControl 每次赋 ItemsSource 都会重建容器，高频帧下必须节流。）
+    /// </summary>
+    private void MaybeRefreshFields()
+    {
+        if (FieldsPanel.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        if (now - _lastFieldsRefreshTicks < 150)
+        {
+            return;
+        }
+
+        _lastFieldsRefreshTicks = now;
+        RefreshFields();
+    }
+
+    /// <summary>用最新一帧刷新字段表（按帧解析关闭 / 无数据时给提示）。</summary>
+    private void RefreshFields()
+    {
+        _fieldsDirty = false;
+
+        if (_protocolFields.Count == 0)
+        {
+            FieldsList.ItemsSource = null;
+            FieldsHint.Text = "（未定义字段，点「字段...」添加）";
+            return;
+        }
+
+        if (FrameEnableCheck.IsChecked != true)
+        {
+            FieldsList.ItemsSource = null;
+            FieldsHint.Text = "（按帧解析未开启）";
+            return;
+        }
+
+        if (_latestFrame is null)
+        {
+            FieldsList.ItemsSource = null;
+            FieldsHint.Text = "（等待数据）";
+            return;
+        }
+
+        var values = ProtocolDecoder.Decode(_latestFrame, _frameDataOffset, _protocolFields);
+        FieldsList.ItemsSource = values;
+        FieldsHint.Text = $"共 {values.Count} 个字段 · 帧长 {_latestFrame.Length} 字节";
     }
 
     private void CopySelection()

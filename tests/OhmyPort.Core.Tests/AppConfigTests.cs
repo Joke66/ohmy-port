@@ -66,4 +66,63 @@ public class AppConfigTests
         Assert.Equal(0, s.FrameLengthSize);
         Assert.Equal(65536, s.FrameLengthBase);
     }
+
+    [Fact]
+    public void ProtocolFields_RoundTripAndClamp()
+    {
+        var cfg = new AppConfig
+        {
+            Sessions =
+            [
+                new SessionConfig
+                {
+                    ProtocolFields =
+                    [
+                        new ProtocolField
+                        {
+                            Name = "电压",
+                            Offset = 2,
+                            Type = "float32",
+                            BigEndian = false,
+                            Scale = 0.01,
+                            Bias = -5,
+                            Length = 4,
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var json = JsonSerializer.Serialize(cfg, AppConfig.JsonOptions);
+        Assert.Contains("\"protocol_fields\"", json);
+        var back = JsonSerializer.Deserialize<AppConfig>(json, AppConfig.JsonOptions)!;
+        var f = back.Sessions[0].ProtocolFields[0];
+        Assert.Equal("电压", f.Name);
+        Assert.Equal(2, f.Offset);
+        Assert.Equal("float32", f.Type);
+        Assert.False(f.BigEndian);
+        Assert.Equal(0.01, f.Scale);
+        Assert.Equal(-5, f.Bias);
+
+        // 非法类型 / 负偏移 / 非法系数被钳制
+        var bad = new AppConfig
+        {
+            Sessions =
+            [
+                new SessionConfig
+                {
+                    ProtocolFields =
+                    [
+                        new ProtocolField { Type = "bogus", Offset = -3, Length = 0, Scale = double.NaN },
+                    ],
+                },
+            ],
+        };
+        bad.Normalize();
+        var bf = bad.Sessions[0].ProtocolFields[0];
+        Assert.Equal("uint8", bf.Type);
+        Assert.Equal(0, bf.Offset);
+        Assert.Equal(1, bf.Length);
+        Assert.Equal(1, bf.Scale);
+    }
 }

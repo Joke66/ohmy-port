@@ -177,7 +177,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             remembered.FrameLengthSize,
             remembered.FrameLengthBase,
             remembered.FrameBigEndian,
-            remembered.FrameChecksum);
+            remembered.FrameChecksum,
+            remembered.ProtocolFields);
     }
 
     private SessionView? ActiveSession =>
@@ -356,6 +357,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SyncMenuState();
     }
 
+    private void OnToggleFieldsClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveSession is { } session)
+        {
+            session.FieldsVisible = FieldsMenu.IsChecked;
+        }
+
+        SyncMenuState();
+    }
+
     private void OnToggleWrapClick(object sender, RoutedEventArgs e)
     {
         _config.WrapEnabled = WrapMenu.IsChecked;
@@ -402,6 +413,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             case "protocol":
                 ProtocolMenu.IsChecked = on;
                 OnToggleProtocolClick(ProtocolMenu, e);
+                break;
+            case "fields":
+                FieldsMenu.IsChecked = on;
+                OnToggleFieldsClick(FieldsMenu, e);
                 break;
             case "send":
                 SendMenu.IsChecked = on;
@@ -1090,6 +1105,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ParamsMenu.IsChecked = false;
             FilterMenu.IsChecked = false;
             ProtocolMenu.IsChecked = false;
+            FieldsMenu.IsChecked = false;
             SendMenu.IsChecked = true;
             HexViewMenu.IsChecked = false;
             FixedMenu.IsChecked = false;
@@ -1100,6 +1116,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ParamsMenu.IsChecked = session.ParamsVisible;
         FilterMenu.IsChecked = session.FilterVisible;
         ProtocolMenu.IsChecked = session.ProtocolVisible;
+        FieldsMenu.IsChecked = session.FieldsVisible;
         SendMenu.IsChecked = session.SendVisible;
         HexViewMenu.IsChecked = session.HexView;
         FixedMenu.IsChecked = session.FixedView;
@@ -1112,6 +1129,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         TbParams.IsChecked = ParamsMenu.IsChecked;
         TbFilter.IsChecked = FilterMenu.IsChecked;
         TbProtocol.IsChecked = ProtocolMenu.IsChecked;
+        TbFields.IsChecked = FieldsMenu.IsChecked;
         TbSend.IsChecked = SendMenu.IsChecked;
         TbSendAssist.IsChecked = SendAssistMenu.IsChecked;
         TbHex.IsChecked = HexViewMenu.IsChecked;
@@ -1214,6 +1232,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 FrameLengthBase = s.FrameLengthBaseValue,
                 FrameBigEndian = s.FrameBigEndianValue,
                 FrameChecksum = s.FrameChecksumKey,
+                ProtocolFields = s.ProtocolFieldsSnapshot,
             })
             .ToList();
 

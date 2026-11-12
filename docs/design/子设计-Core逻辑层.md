@@ -86,6 +86,17 @@
 - `Match(text)`：正则捕获组命中且可解析为数值返回该值，否则退回 `TextUtil.ExtractNumbers` 取第一个；关键词模式取关键词之后的第一个数字。
 - 对应 Python 版 plot_widget.PlotRule，目前仅 Core 层实现，UI 未接线（M7 待做）。
 
+## 11.1 协议字段解析 — `Models/ProtocolField.cs`
+
+- `FieldTypes`：类型键常量（uint8/int8/uint16/int16/uint32/int32/float32/float64/hex/ascii）+ 下拉选项表（显示名/键/固定字节数）+ `IsValid`/`SizeOf`/`LabelOf`。
+- `ProtocolField`：名称、偏移（相对数据区起始）、类型键、字节序、系数 `Scale`、零点 `Bias`、`Length`（hex/ascii 用）。
+- `FieldValue(Name, TypeLabel, Text, RawHex, Ok)`：单个字段的解析结果。
+- `ProtocolDecoder.Decode(frame, offsetBase, fields)`：纯函数、无状态；`offsetBase` 为数据区在帧内的起始下标（帧头 + 长度字段长度）。
+  - 数值类型按字节序读原始值，物理值 = 原始值 × Scale + Bias，用 `TextUtil.FormatValue` 格式化。
+  - hex 输出空格分隔大写十六进制；ascii 按 ASCII 解码并去掉尾部 `\0`。
+  - 越界或类型非法返回 `Ok = false`、值显示「—」，不影响其它字段。
+- 与 `FrameParser` 的分工：`FrameParser` 负责切帧 / 验校验，`ProtocolDecoder` 负责帧内字段取值；两者都无 UI 依赖。
+
 ## 12. 日志落盘 — `Logging/LogManager.cs`
 
 - `Open(stem, logDir)`：以端口名 sanitize 后的 stem 生成 `<stem>_yyyyMMdd_HHmmss.txt`，`FileShare.Read` 允许外部查看。

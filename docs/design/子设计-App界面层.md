@@ -26,16 +26,17 @@
 
 ## 3. 会话视图 — `Views/SessionView.xaml` / `.xaml.cs`
 
-单个串口会话的完整面板，含 8 行布局：
+单个串口会话的完整面板，含 9 行布局：
 
 1. 端口配置行（端口下拉 + 刷新 + 波特率可编辑下拉）。
 2. 完整串口参数（数据位/停止位/校验位/流控/DTR/RTS，默认隐藏，视图菜单打开）。
 3. 关键词过滤（关键词/模式/区分大小写/编码/HEX 显示/应用，默认隐藏）。
-4. 协议帧解析（帧头/帧尾/长度字段/长度基准/字节序/校验/启用，默认隐藏，视图菜单打开）。
+4. 协议帧解析（帧头/帧尾/长度字段/长度基准/字节序/校验/「字段...」按钮，默认隐藏）。
 5. 日志区（`LogView`）。
-6. 命中结果分栏（split 模式显示）。
-7. 日志操作行（打开串口/暂停/清空/固定显示/开始记录）。
-8. 消息发送（发送下拉 + 换行 + HEX 发送 + 校验 + 发送按钮）。
+6. 帧字段解析结果（名称/类型/值/原始 HEX 表格，默认隐藏，视图菜单「字段解析」打开）。
+7. 命中结果分栏（split 模式显示）。
+8. 日志操作行（打开串口/暂停/清空/固定显示/开始记录）。
+9. 消息发送（发送下拉 + 换行 + HEX 发送 + 校验 + 发送按钮）。
 
 关键行为：
 
@@ -44,6 +45,7 @@
 - 过滤：`ApplyFilter` 重建 `LogFilter` 并 `ReRender` 全量重绘；`ToggleFilter` 关闭时清高亮并隐藏分栏。
 - 发送：`SendRaw` 读输入 → `SendContent`（HEX/文本 + 换行）→ 选中校验时追加校验字节（换行前）→ 成功后入队 Tx 回显并计 `_txBytes`、写发送历史（上限 50）。
 - 协议帧解析：`ApplyProtocol` 由帧头/帧尾/长度/校验字段构造 `FrameParser` 并 `SetFrameParser`；未启用时置 null 回退按行。帧校验失败在 `Flush` 中追加系统提示。
+- 字段解析：`Flush` 记录最近一帧（`_latestFrame`）并置脏；`MaybeRefreshFields` 限速 150ms、面板不可见时不解码，`RefreshFields` 调 `ProtocolDecoder.Decode` 刷新表格（越界字段标红）。数据区偏移 `_frameDataOffset = 帧头长度 + 长度字段长度`。字段定义由 `ProtocolFieldDialog` 编辑，按会话持久化。
 - 记录：`StartRecord`/`StopRecord` 用 `LogManager` 落盘；`ToggleRecord` 切换；`SyncRecordButton` 更新按钮文案。
 - 状态：`StatusText` 拼端口/波特率/编码/连接状态/RX/TX 字节，`StatusChanged` 通知主窗口刷新状态栏。
 - 热插拔：`_hotplugTimer`（2s）检测连接端口被拔出则自动断开，端口集合变化则刷新列表。
@@ -85,6 +87,7 @@
 - `ComboSelectDialog`：通用下拉选择（日志保留策略/字体）。
 - `NumberInputDialog`：通用数字输入（日志分片大小，钳制范围）。
 - `ChecksumCalculatorDialog`：校验计算器，HEX 输入 → SUM8/XOR8/CRC16-Modbus 结果 + 复制。
+- `ProtocolFieldDialog`：协议字段编辑，一行一个字段（名称/偏移/类型/长度/大端/系数/偏移量），确定时统一校验；`FieldRow` 保存文本态输入。
 
 ## 8. 性能压测 — `StressTest.cs`
 
