@@ -1239,6 +1239,33 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         SendContent(content, addHistory: false);
     }
 
+    /// <summary>
+    /// 发送原始字节（文件下发用）：不做 HEX/换行/校验处理，原样发送并回显、计 TX。
+    /// 未连接或发送失败返回 false。
+    /// </summary>
+    public bool SendRawBytes(byte[] data)
+    {
+        if (data.Length == 0)
+        {
+            return true;
+        }
+
+        if (!_monitor.IsConnected)
+        {
+            return false;
+        }
+
+        if (_monitor.Send(data))
+        {
+            _txBytes += data.Length;
+            _pending.Enqueue(new LogRecord(DateTime.Now, LogDirection.Tx, data, null));
+            RaiseStatusChanged();
+            return true;
+        }
+
+        return false;
+    }
+
     /// <summary>按当前 HEX / 换行 / 编码设置编码并发送；返回是否已提交。</summary>
     private bool SendContent(string text, bool addHistory)
     {

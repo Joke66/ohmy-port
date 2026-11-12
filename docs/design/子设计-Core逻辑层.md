@@ -27,8 +27,8 @@
 
 ## 4. 命令模型 — `Models/CommandItem.cs`
 
-- `CommandItem`：名称 + 内容 + 是否参与定时循环 + 所属页号。
-- `CommandPages.Load(pages, commands, currentPages)`：解析命令页与命令——无 pages 时保留默认页；页号越界回退第 1 页；名称与内容都为空的命令丢弃。
+- `CommandItem`：名称 + 内容 + 是否参与定时循环 + 所属页号 + 发送后延时 `DelayMs`（0 表示用全局间隔）。
+- `CommandPages.Load(pages, commands, currentPages)`：解析命令页与命令——无 pages 时保留默认页；页号越界回退第 1 页；名称与内容都为空的命令丢弃；`DelayMs` 钳制为非负。
 
 ## 5. 发送编解码 — `SendCodec.cs`
 
@@ -102,6 +102,15 @@
 - `PlotSeries`：定长环形缓冲（逻辑索引 0 为最旧），`Add`/`Clear`/`Range()`（忽略 NaN）/`Latest`；缺失值用 `NaN` 表示，绘制时断线。
 - `PlotHub`：按规则从日志行取样（每条规则每行取一个值），`Configure` 重配规则（同名且容量不变时沿用缓冲）、`Feed`、`Clear`、`SetCapacity`（保留最近的点）。`Capacity` 默认 `UiDefaults.PlotWindow`。
 - 线程约束：与 `FrameParser` 一致，`Feed` 与绘制都在 UI 线程，无锁。
+
+## 11.3 文件发送解析 — `FileSend.cs`
+
+- `FileSendFormat`：HexText / TextLines / RawBinary。
+- `ParseHexContent(text)`：十六进制文本 → 字节，容忍空白/逗号/分号/`0x` 前缀，非法或奇数个 hex 返回 null。
+- `Chunk(data, chunkSize)`：字节数组按固定大小分块。
+- `SplitTextLines(lines, encoding, newline)`：每行转义解析并追加换行，空行跳过。
+- `Prepare(...)`：按格式统一入口（HexText → 解析 + 分块；TextLines → 逐行；RawBinary → 分块）。
+- 纯函数、无状态、可单测；读文件与串口发送在界面层完成。
 
 ## 12. 日志落盘 — `Logging/LogManager.cs`
 

@@ -86,6 +86,7 @@
       </MenuItem>
       <MenuItem Header="工具(_T)">
         <MenuItem Header="校验计算器..." app:IconGlyph.Name="calc" Click="OnOpenChecksumCalculatorClick" />
+        <MenuItem Header="文件发送..." app:IconGlyph.Name="file" Click="OnOpenFileSendClick" />
       </MenuItem>
       <MenuItem Header="帮助(_H)">
         <MenuItem Header="关于 OhmyPort" app:IconGlyph.Name="info" Click="OnAboutClick" />

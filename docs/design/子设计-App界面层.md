@@ -19,7 +19,7 @@
 - 菜单/工具栏：工具栏 ToggleButton 把状态写回对应菜单项再复用菜单处理逻辑（`OnToolbarToggleClick`），`SyncMenuState`/`SyncToolbarState` 保证两者一致。
 - 全局设置：`ApplyGlobalSettings` 把换行/日志目录/分片/自动记录/主题着色下发到所有会话。
 - 发送辅助：`RebuildCommandTabs` 按 `_config.Pages` 重建命令页；`SendCommand` 调当前会话 `SendCommandContent`；命令页右键菜单支持新增/重命名/删除页。
-- 定时循环：`_cycleTimer`（DispatcherTimer）每 tick 取 `Cycle=true` 的命令轮流发送到当前活动会话；`SetCycleEnabled/Interval` 控制启停与间隔。
+- 定时循环：`_cycleTimer`（DispatcherTimer）每 tick 取 `Cycle=true` 的命令轮流发送到当前活动会话；发完一条后按该命令 `DelayMs`（>0）或全局间隔动态更新 `Interval`；`SetCycleEnabled/Interval` 控制启停与间隔。
 - 配置导入导出：`OnExportConfigClick` 序列化到用户选的文件；`OnImportConfigClick` 反序列化 + `Normalize` 后对齐会话数、全局设置、主题、背景，再保存。
 - 关闭流程：`OnClosing` 按 `CloseBehavior`（tray/exit）+ `CloseConfirm` 决定托盘还是退出；`OnClosed` 停所有定时器、dispose 托盘、`SaveConfig`、逐个 `session.Shutdown()`。
 - 背景皮肤：`ApplyBackground` 加载背景图（4K 按 1920 宽解码）、设 `BlurEffect` 半径（`BgBlur*3` 上限 36）、设遮罩 `BgVeilLayer.Opacity`，并调 `ThemeService.SetSurfaceTranslucency(true)` 让容器半透明。
@@ -87,7 +87,7 @@
 
 ## 7. 对话框 — `Views/*`
 
-- `CommandEditDialog`：命令名称 + 内容（多行，支持转义）+ 所属页（页满/新建页）；`pageOnly` 模式复用于重命名页。
+- `CommandEditDialog`：命令名称 + 内容（多行，支持转义）+ 所属页（页满/新建页）+ 发送后延时；`pageOnly` 模式复用于重命名页。
 - `CycleDialog`：定时循环发送设置——启用开关、间隔（10ms~1h 钳制）、勾选参与循环的命令列表（`CycleItem` 双向绑定）；关闭弹窗不停止循环。
 - `BackgroundDialog`：背景图目录选择/打开/刷新、图片下拉、模糊滑杆（0~50）、遮罩滑杆（0~100%）、启用开关。
 - `CloseConfirmDialog`：关闭时「最小化到托盘 / 直接退出」+ 不再提示。
@@ -97,6 +97,7 @@
 - `ProtocolFieldDialog`：协议字段编辑，一行一个字段（名称/偏移/类型/长度/大端/系数/偏移量），确定时统一校验；`FieldRow` 保存文本态输入。
 - `PlotRuleDialog`：曲线提取规则编辑，一行一条曲线（名称 + 正则/关键词）。
 - `PlotWindow`（独立窗口，非模态）：工具栏（提取规则/清空/暂停刷新/窗口点数）+ `PlotCanvas` 绘图；60ms 定时重绘，数据来自所属会话的 `PlotHub`（关窗不丢数据，重开接上）；会话关闭时一并关闭。
+- `FileSendDialog`：文件发送对话框——文件/格式（HEX/文本行/二进制）/分包大小/分包间隔/进度；后台线程逐块调用会话 `SendRawBytes`，支持取消。
 
 ## 8. 性能压测 — `StressTest.cs`
 

@@ -7,7 +7,7 @@
 
 OhmyPort 是一个 Windows 串口调试助手，C# / WPF 实现（.NET 10）。它是 Python + PySide6 原版（master 分支）的 C# 重写分支（wpf 分支），功能目标与原版一致：用原生 Windows 运行时替代 PyInstaller 自解压，换取更小体积与更快启动。
 
-核心能力：多串口会话、文本/HEX 收发、关键词过滤四模式、协议帧解析 + 字段解析、发送自动算校验、实时曲线、命令页 + 定时循环发送、日志录制/分片/保留、四套主题/背景皮肤/托盘。
+核心能力：多串口会话、文本/HEX 收发、关键词过滤四模式、协议帧解析 + 字段解析、发送自动算校验、实时曲线、命令页 + 定时循环发送（每条独立延时）+ 文件下发、日志录制/分片/保留、四套主题/背景皮肤/托盘。
 
 模块边界：
 
@@ -52,6 +52,7 @@ src/OhmyPort.Core/                  纯逻辑层（无 UI）
 ├── AppPaths.cs                     可写数据目录解析（exe 同级优先，否则 %APPDATA%\OhmyPort）
 ├── ConfigService.cs                配置读写（Load / Save，损坏回退默认值）
 ├── Constants.cs                    应用元信息 + 串口默认值 + 性能参数 + 日志保留 + 主题标识
+├── FileSend.cs                     文件发送解析与分块（HEX 文本 / 文本行 / 二进制 raw）
 ├── LogFilter.cs                    多关键词过滤四模式 + 命中判定
 ├── SendCodec.cs                    HEX 解析 / 转义字符解析 / 编码获取（UTF-8/GBK/ASCII）
 ├── TextUtil.cs                     字节格式化 / 数字提取 / 版本解析比较
@@ -85,6 +86,7 @@ src/OhmyPort.App/                   WPF 界面层
     ├── ProtocolFieldDialog.xaml / .xaml.cs 协议字段编辑（名称/偏移/类型/系数）
     ├── PlotWindow.xaml / .xaml.cs   实时曲线窗口（60ms 重绘）
     ├── PlotRuleDialog.xaml / .xaml.cs 曲线提取规则编辑
+    ├── FileSendDialog.cs           文件发送对话框（格式/分包/间隔/进度，后台线程）
     ├── BackgroundDialog.cs         背景皮肤对话框
     ├── CloseConfirmDialog.cs       关闭确认（托盘/退出/不再提示）
     ├── ComboSelectDialog.cs        下拉选择对话框（保留策略/字体）
@@ -92,7 +94,7 @@ src/OhmyPort.App/                   WPF 界面层
 tests/OhmyPort.Core.Tests/          xUnit（移植自原版 pytest）
 ├── CommandPagesTests.cs / FrameParserTests.cs / LogFilterTests.cs
 ├── PlotRuleTests.cs / SendCodecTests.cs / TextUtilTests.cs
-├── AppConfigTests.cs / ProtocolDecoderTests.cs / PlotHubTests.cs
+├── AppConfigTests.cs / ProtocolDecoderTests.cs / PlotHubTests.cs / FileSendTests.cs
 ```
 
 ## 5. 架构概要

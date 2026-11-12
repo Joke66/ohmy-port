@@ -466,6 +466,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         dialog.ShowDialog();
     }
 
+    /// <summary>打开文件发送对话框（绑定当前会话，后台线程逐块下发）。</summary>
+    private void OnOpenFileSendClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveSession is not { } session)
+        {
+            return;
+        }
+
+        var dialog = new FileSendDialog(session.SendRawBytes, session.Title) { Owner = this };
+        dialog.ShowDialog();
+    }
+
     /// <summary>打开实时曲线窗口（同一时刻只跟一个会话；已开着就直接激活）。</summary>
     private void OnOpenPlotClick(object sender, RoutedEventArgs e)
     {
@@ -780,7 +792,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             editing is null ? "添加命令" : "编辑命令",
             editing?.Name,
             editing?.Content,
-            editing?.Page ?? 0)
+            editing?.Page ?? 0,
+            editing?.DelayMs ?? 0)
         {
             Owner = this,
         };
@@ -818,6 +831,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Content = content,
                 Cycle = false,
                 Page = page,
+                DelayMs = dialog.DelayMs,
             });
         }
         else
@@ -825,6 +839,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             editing.Name = name.Length > 0 ? name : editing.Name;
             editing.Content = content;
             editing.Page = page;
+            editing.DelayMs = dialog.DelayMs;
         }
 
         CommandsChanged();
@@ -1005,7 +1020,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _cycleIndex++;
         if (index >= 0)
         {
-            session.SendCommandContent(_config.Commands[index].Content);
+            var cmd = _config.Commands[index];
+            session.SendCommandContent(cmd.Content);
+
+            // 每条命令发送后延时：该命令 DelayMs > 0 时用它，否则用全局间隔
+            var next = cmd.DelayMs > 0 ? cmd.DelayMs : _cycleInterval;
+            _cycleTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(10, next));
         }
     }
 

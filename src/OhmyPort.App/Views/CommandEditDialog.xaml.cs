@@ -11,7 +11,7 @@ public partial class CommandEditDialog : Window
 
     public CommandEditDialog(IReadOnlyList<string> pages, Func<int, int> commandCountOfPage,
                              string title = "添加命令", string? name = null, string? content = null,
-                             int page = 0, bool pageOnly = false)
+                             int page = 0, int delayMs = 0, bool pageOnly = false)
     {
         InitializeComponent();
         _pages = pages;
@@ -20,12 +20,14 @@ public partial class CommandEditDialog : Window
         Title = title;
         NameEdit.Text = name ?? "";
         ContentEdit.Text = content ?? "";
+        DelayEdit.Text = delayMs.ToString();
         PopulatePages(page);
 
         if (pageOnly)
         {
             ContentRow.Visibility = Visibility.Collapsed;
             PageRow.Visibility = Visibility.Collapsed;
+            DelayRow.Visibility = Visibility.Collapsed;
         }
 
         OkButton.Click += (_, _) => DialogResult = true;
@@ -43,6 +45,9 @@ public partial class CommandEditDialog : Window
     public string CommandName => NameEdit.Text.Trim();
 
     public string CommandContent => ContentEdit.Text;
+
+    /// <summary>发送后延时（毫秒），输入非法时按 0。</summary>
+    public int DelayMs => int.TryParse(DelayEdit.Text.Trim(), out var v) && v > 0 ? v : 0;
 
     /// <summary>选中的页索引；-1 表示新建页。</summary>
     public int SelectedPage => (PageCombo.SelectedItem as Option)?.Value as int? ?? -1;

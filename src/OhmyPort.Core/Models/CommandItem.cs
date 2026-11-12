@@ -1,12 +1,15 @@
 namespace OhmyPort.Core.Models;
 
-/// <summary>发送辅助里的一个命令：名称 + 内容 + 是否参与定时循环 + 所属页。</summary>
+/// <summary>发送辅助里的一个命令：名称 + 内容 + 是否参与定时循环 + 所属页 + 发送后延时。</summary>
 public sealed class CommandItem
 {
     public string Name { get; set; } = "";
     public string Content { get; set; } = "";
     public bool Cycle { get; set; }
     public int Page { get; set; }
+
+    /// <summary>发送后延时（毫秒）；定时循环发送时发完这条等这个时间再发下一条，0 表示用全局间隔。</summary>
+    public int DelayMs { get; set; }
 }
 
 /// <summary>
@@ -46,6 +49,7 @@ public static class CommandPages
                 Content = c.Content,
                 Cycle = c.Cycle,
                 Page = page,
+                DelayMs = Math.Max(0, c.DelayMs),
             });
         }
 
