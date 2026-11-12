@@ -1,0 +1,64 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    内嵌图标集：24×24 线性图标，来自原版 icons.py 的 SVG 路径。
+    全部只描边不填充，颜色走 Brush.Foreground（主题切换实时生效）。
+
+    用法：
+      <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.save}" />
+      菜单项：app:IconGlyph.Name="save"
+  -->
+
+  <!-- ============ 文件 ============ -->
+  <Geometry x:Key="Icon.add">M 12,5 V 19 M 5,12 H 19</Geometry>
+  <Geometry x:Key="Icon.save">M 5,3 H 16 L 20,7 V 21 H 5 Z M 8,3 V 8 H 15 V 3 M 8,14 H 16 V 21 H 8 Z</Geometry>
+  <Geometry x:Key="Icon.folder">M 3,6 H 9 L 11,8 H 21 V 19 H 3 Z</Geometry>
+  <Geometry x:Key="Icon.export">M 12,4 V 16 M 7,11 L 12,16 L 17,11 M 4,20 H 20</Geometry>
+  <Geometry x:Key="Icon.import">M 12,16 V 4 M 7,9 L 12,4 L 17,9 M 4,20 H 20</Geometry>
+  <Geometry x:Key="Icon.quit">M 5,4 H 11 M 5,20 H 11 M 11,4 V 20 M 14,8 L 18,12 L 14,16</Geometry>
+
+  <!-- ============ 串口 / 视图 ============ -->
+  <Geometry x:Key="Icon.port">M 8,2.5 H 16 A 2,2 0 0 1 18,4.5 V 7.5 A 2,2 0 0 1 16,9.5 H 8 A 2,2 0 0 1 6,7.5 V 4.5 A 2,2 0 0 1 8,2.5 Z M 9,9.5 V 12.5 M 15,9.5 V 12.5 M 9,16.5 C 9,15 10.2,14 12,14 C 13.8,14 15,15 15,16.5 M 8,19.5 H 16 M 9.5,21.5 H 14.5</Geometry>
+  <Geometry x:Key="Icon.sliders">M 4,7 H 14 M 18,7 H 20 M 4,17 H 8 M 12,17 H 20 M 14,7 A 2,2 0 0 0 18,7 A 2,2 0 0 0 14,7 Z M 8,17 A 2,2 0 0 0 12,17 A 2,2 0 0 0 8,17 Z</Geometry>
+  <Geometry x:Key="Icon.filter">M 4,5 H 20 L 14,12 V 17 L 10,19 V 12 Z</Geometry>
+  <Geometry x:Key="Icon.message">M 21,11.5 A 8,8 0 0 1 13,19.5 H 4 L 6,16.5 A 8,8 0 1 1 21,11.5 Z M 8.5,11.5 H 8.6 M 12,11.5 H 12.1 M 15.5,11.5 H 15.6</Geometry>
+  <Geometry x:Key="Icon.send">M 4,12 L 20,5 L 14,21 L 12,15 Z M 12,15 L 20,5</Geometry>
+  <Geometry x:Key="Icon.reply">M 9,14 L 4,9 L 9,4 M 4,9 H 15 A 6,6 0 0 1 15,21 H 11</Geometry>
+  <Geometry x:Key="Icon.hex">M 8,6 L 5,18 M 16,6 L 19,18 M 8,12 H 16 M 6.5,10 H 5.5 M 6.5,14 H 5.5 M 18.5,10 H 17.5 M 18.5,14 H 17.5</Geometry>
+  <Geometry x:Key="Icon.fixed">M 12,4 V 20 M 7,8 L 4,12 L 7,16 M 17,8 L 20,12 L 17,16</Geometry>
+  <Geometry x:Key="Icon.wrap">M 4,7 H 20 M 4,12 H 20 M 4,17 H 13 M 17,15 V 21 M 14.5,18.5 L 17,21 L 19.5,18.5</Geometry>
+  <Geometry x:Key="Icon.search">M 11,4 A 7,7 0 0 0 11,18 A 7,7 0 0 0 11,4 Z M 21,21 L 16.5,16.5</Geometry>
+  <Geometry x:Key="Icon.convert">M 7,8 H 19 M 15,4 L 19,8 L 15,12 M 17,16 H 5 M 9,12 L 5,16 L 9,20</Geometry>
+  <Geometry x:Key="Icon.chart">M 4,20 V 4 M 4,20 H 20 M 8,16 L 12,10 L 15,13 L 20,5</Geometry>
+
+  <!-- ============ 设置 / 帮助 ============ -->
+  <Geometry x:Key="Icon.palette">M 12,3 A 9,9 0 0 0 12,21 H 14 C 15.5,21 16,20 16,19 C 16,17.6 15,17 15,15.8 C 15,14.8 15.8,14 16.8,14 H 18 A 3,3 0 0 0 21,11 A 8,8 0 0 0 12,3 Z M 6.5,10 A 1,1 0 0 0 8.5,10 A 1,1 0 0 0 6.5,10 Z M 9.5,6.8 A 1,1 0 0 0 11.5,6.8 A 1,1 0 0 0 9.5,6.8 Z M 13.5,6.8 A 1,1 0 0 0 15.5,6.8 A 1,1 0 0 0 13.5,6.8 Z M 16,10 A 1,1 0 0 0 18,10 A 1,1 0 0 0 16,10 Z</Geometry>
+  <Geometry x:Key="Icon.font">M 4,19 L 10,5 H 14 L 20,19 M 8,14 H 16 M 7,19 H 17</Geometry>
+  <Geometry x:Key="Icon.shard">M 4,4 H 20 V 10 H 4 Z M 5,14 H 19 A 1,1 0 0 1 20,15 V 19 A 1,1 0 0 1 19,20 H 5 A 1,1 0 0 1 4,19 V 15 A 1,1 0 0 1 5,14 Z</Geometry>
+  <Geometry x:Key="Icon.retention">M 12,4 A 8,8 0 1 1 12,20 M 12,8 V 12 L 15,14</Geometry>
+  <Geometry x:Key="Icon.tray">M 6,3 H 18 A 3,3 0 0 1 21,6 V 18 A 3,3 0 0 1 18,21 H 6 A 3,3 0 0 1 3,18 V 6 A 3,3 0 0 1 6,3 Z M 12,8 V 14 M 9,11 L 12,14 L 15,11</Geometry>
+  <Geometry x:Key="Icon.question">M 12,3 A 9,9 0 0 0 12,21 A 9,9 0 0 0 12,3 Z M 9.5,9.5 A 2.6,2.6 0 1 1 13.5,11.6 C 12.5,12.3 12,12.8 12,14 M 12,17 H 12.1</Geometry>
+  <Geometry x:Key="Icon.info">M 12,3 A 9,9 0 0 0 12,21 A 9,9 0 0 0 12,3 Z M 12,11 V 17 M 12,8 H 12.1</Geometry>
+  <Geometry x:Key="Icon.update">M 20,12 A 8,8 0 1 1 17,5.8 M 20,3 V 8 H 15</Geometry>
+
+  <!-- ============ 会话操作 ============ -->
+  <Geometry x:Key="Icon.pause">M 9,6 V 18 M 15,6 V 18</Geometry>
+  <Geometry x:Key="Icon.clear">M 4,7 H 20 M 9,7 V 5 H 15 V 7 M 7,7 L 8,20 H 16 L 17,7</Geometry>
+  <Geometry x:Key="Icon.record">M 12,8 A 4,4 0 0 0 12,16 A 4,4 0 0 0 12,8 Z</Geometry>
+
+  <!-- ============ 图标样式 ============ -->
+  <!-- Stretch 会把几何放大到 16×16，描边随之缩放，视觉粗细约 1.4px -->
+  <Style x:Key="Theme.Icon" TargetType="Path">
+    <Setter Property="Width" Value="16" />
+    <Setter Property="Height" Value="16" />
+    <Setter Property="Stretch" Value="Uniform" />
+    <Setter Property="Stroke" Value="{DynamicResource Brush.Foreground}" />
+    <Setter Property="StrokeThickness" Value="1.9" />
+    <Setter Property="StrokeStartLineCap" Value="Round" />
+    <Setter Property="StrokeEndLineCap" Value="Round" />
+    <Setter Property="StrokeLineJoin" Value="Round" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+  </Style>
+
+</ResourceDictionary>

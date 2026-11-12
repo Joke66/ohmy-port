@@ -4,6 +4,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -33,6 +34,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         InitializeComponent();
         Title = $"{AppInfo.Name} v{AppInfo.Version}";
+        ThemeService.AttachWindow(this);
         PreviewKeyDown += OnPreviewKeyDown;
         SessionTabs.SelectionChanged += (_, _) =>
         {
@@ -78,6 +80,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // 全局：自动换行 + 日志设置 + 主题着色
         WrapMenu.IsChecked = _config.WrapEnabled;
         ApplyGlobalSettings();
+        ApplyBackground();
 
         RebuildCommandTabs();
         SetupTray();
@@ -287,6 +290,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             session.ParamsVisible = ParamsMenu.IsChecked;
         }
+
+        SyncMenuState();
     }
 
     private void OnToggleSendClick(object sender, RoutedEventArgs e)
@@ -295,6 +300,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             session.SendVisible = SendMenu.IsChecked;
         }
+
+        SyncMenuState();
     }
 
     private void OnToggleHexViewClick(object sender, RoutedEventArgs e)
@@ -303,6 +310,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             session.HexView = HexViewMenu.IsChecked;
         }
+
+        SyncMenuState();
     }
 
     private void OnToggleFixedClick(object sender, RoutedEventArgs e)
@@ -311,6 +320,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             session.FixedView = FixedMenu.IsChecked;
         }
+
+        SyncMenuState();
     }
 
     private void OnSaveLogClick(object sender, RoutedEventArgs e) => ActiveSession?.SaveLog();
@@ -321,6 +332,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             session.FilterVisible = FilterMenu.IsChecked;
         }
+
+        SyncMenuState();
     }
 
     private void OnToggleWrapClick(object sender, RoutedEventArgs e)
@@ -332,6 +345,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _configService.Save(_config);
+        SyncMenuState();
     }
 
     private void OnZoomInClick(object sender, RoutedEventArgs e) => ActiveSession?.ZoomIn();
@@ -343,6 +357,49 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OnToggleSendAssistClick(object sender, RoutedEventArgs e)
     {
         SendAssistPanel.Visibility = SendAssistMenu.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+        SyncMenuState();
+    }
+
+    /// <summary>工具栏上的视图开关：把状态写回对应菜单项，再复用菜单的处理逻辑。</summary>
+    private void OnToolbarToggleClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton { Tag: string tag } toggle)
+        {
+            return;
+        }
+
+        var on = toggle.IsChecked == true;
+        switch (tag)
+        {
+            case "params":
+                ParamsMenu.IsChecked = on;
+                OnToggleParamsClick(ParamsMenu, e);
+                break;
+            case "filter":
+                FilterMenu.IsChecked = on;
+                OnToggleFilterClick(FilterMenu, e);
+                break;
+            case "send":
+                SendMenu.IsChecked = on;
+                OnToggleSendClick(SendMenu, e);
+                break;
+            case "sendAssist":
+                SendAssistMenu.IsChecked = on;
+                OnToggleSendAssistClick(SendAssistMenu, e);
+                break;
+            case "hex":
+                HexViewMenu.IsChecked = on;
+                OnToggleHexViewClick(HexViewMenu, e);
+                break;
+            case "fixed":
+                FixedMenu.IsChecked = on;
+                OnToggleFixedClick(FixedMenu, e);
+                break;
+            case "wrap":
+                WrapMenu.IsChecked = on;
+                OnToggleWrapClick(WrapMenu, e);
+                break;
+        }
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
@@ -532,7 +589,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OnOpenBackgroundClick(object sender, RoutedEventArgs e)
     {
         var dialog = new BackgroundDialog(
-            _config.BgDir, _config.BgImage, _config.BgBlur, _config.BgEnabled)
+            _config.BgDir, _config.BgImage, _config.BgBlur, _config.BgVeil, _config.BgEnabled)
         {
             Owner = this,
         };
@@ -544,6 +601,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _config.BgDir = dialog.BgDir;
         _config.BgImage = dialog.BgImage;
         _config.BgBlur = dialog.BgBlur;
+        _config.BgVeil = dialog.BgVeil;
         _config.BgEnabled = dialog.BgEnabled;
         ApplyBackground();
         _configService.Save(_config);
@@ -554,29 +612,53 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         BgLayer.Source = null;
         BgLayer.Visibility = Visibility.Collapsed;
         BgBlurEffect.Radius = 0;
+        BgVeilLayer.Visibility = Visibility.Collapsed;
+        BgVeilLayer.Opacity = 0;
 
         if (!_config.BgEnabled || string.IsNullOrEmpty(_config.BgImage))
         {
+            ThemeService.SetSurfaceTranslucency(false);
             return;
         }
 
         var src = System.IO.Path.Combine(_config.BgDir, _config.BgImage);
         if (!File.Exists(src))
         {
+            ThemeService.SetSurfaceTranslucency(false);
             return;
         }
 
         try
         {
-            BgLayer.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(src));
-            // 模糊强度映射：0..50 → 0..30 像素
-            BgBlurEffect.Radius = _config.BgBlur > 0 ? _config.BgBlur * 0.6 : 0;
+            // 4K 图按 1920 宽解码，对齐原版的 thumbnail(1920, 1080)，也省掉大图缩放开销
+            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bmp.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreImageCache;
+            bmp.DecodePixelWidth = 1920;
+            bmp.UriSource = new Uri(src);
+            bmp.EndInit();
+
+            BgLayer.Source = bmp;
+            BgLayer.Opacity = 1.0; // 原版就是满强度的模糊图打底，不叠透明度
+            // 模糊强度对齐原版：PIL GaussianBlur(max(1, bg_blur * 3))
+            BgBlurEffect.Radius = _config.BgBlur > 0 ? Math.Min(36, _config.BgBlur * 3) : 0;
             BgLayer.Visibility = Visibility.Visible;
+
+            // 背景遮罩：0% 全透（原版观感），100% 等于把背景图盖没
+            var veil = Math.Clamp(_config.BgVeil, 0, 100) / 100.0;
+            BgVeilLayer.Opacity = veil;
+            BgVeilLayer.Visibility = Visibility.Visible;
+
+            // 日志区 / 面板等大面积容器转半透明，否则背景图几乎全被挡住
+            ThemeService.SetSurfaceTranslucency(true);
         }
         catch
         {
             BgLayer.Source = null;
             BgLayer.Visibility = Visibility.Collapsed;
+            BgVeilLayer.Visibility = Visibility.Collapsed;
+            ThemeService.SetSurfaceTranslucency(false);
         }
     }
 
@@ -980,6 +1062,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             SendMenu.IsChecked = true;
             HexViewMenu.IsChecked = false;
             FixedMenu.IsChecked = false;
+            SyncToolbarState();
             return;
         }
 
@@ -988,6 +1071,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SendMenu.IsChecked = session.SendVisible;
         HexViewMenu.IsChecked = session.HexView;
         FixedMenu.IsChecked = session.FixedView;
+        SyncToolbarState();
+    }
+
+    /// <summary>工具栏开关跟随菜单状态（单向同步，避免互相触发）。</summary>
+    private void SyncToolbarState()
+    {
+        TbParams.IsChecked = ParamsMenu.IsChecked;
+        TbFilter.IsChecked = FilterMenu.IsChecked;
+        TbSend.IsChecked = SendMenu.IsChecked;
+        TbSendAssist.IsChecked = SendAssistMenu.IsChecked;
+        TbHex.IsChecked = HexViewMenu.IsChecked;
+        TbFixed.IsChecked = FixedMenu.IsChecked;
+        TbWrap.IsChecked = WrapMenu.IsChecked;
     }
 
     private void RefreshStatusBar()

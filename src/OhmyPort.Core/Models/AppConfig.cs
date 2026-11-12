@@ -46,6 +46,10 @@ public sealed class AppConfig
     public string BgDir { get; set; } = "";
     public string BgImage { get; set; } = "";
     public int BgBlur { get; set; } = 10;
+
+    /// <summary>背景遮罩浓度（0-100%）：0 = 背景图完全可见，100 = 背景图几乎被窗口底色盖住。</summary>
+    public int BgVeil { get; set; }
+
     public bool BgEnabled { get; set; }
 
     public List<SessionConfig> Sessions { get; set; } = [];
@@ -92,6 +96,7 @@ public sealed class AppConfig
         }
 
         BgBlur = Math.Clamp(BgBlur, 0, 50);
+        BgVeil = Math.Clamp(BgVeil, 0, 100);
 
         if (string.IsNullOrEmpty(FontFamily))
         {

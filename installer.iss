@@ -1,9 +1,9 @@
-; OhmyPort 安装脚本（Inno Setup 6）
+﻿; OhmyPort 安装脚本（Inno Setup 6）
 ; 用法：ISCC.exe /DMyAppVersion=<版本号> installer.iss
 ; 或直接编译（使用下方默认版本号）
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.8.7"
+  #define MyAppVersion "1.8.8"
 #endif
 
 #define MyAppName "OhmyPort"

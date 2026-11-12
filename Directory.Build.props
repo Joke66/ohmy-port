@@ -1,11 +1,11 @@
-<Project>
+﻿<Project>
 
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
-    <Version>1.8.7</Version>
+    <Version>1.8.8</Version>
     <Company>ShineZhang</Company>
     <Product>OhmyPort</Product>
     <Copyright>Copyright © 2026 ShineZhang</Copyright>

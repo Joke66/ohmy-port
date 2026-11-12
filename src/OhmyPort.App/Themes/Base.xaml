@@ -74,6 +74,70 @@
     </Setter>
   </Style>
 
+  <!-- ============ 工具栏图标按钮 ============ -->
+  <Style x:Key="ToolStrip.Button" TargetType="Button">
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="26" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                  BorderBrush="Transparent" BorderThickness="1" CornerRadius="3">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.PanelAlt}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- 视图开关：选中态用强调色描边 + 悬停底色 -->
+  <Style x:Key="ToolStrip.Toggle" TargetType="ToggleButton">
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="26" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToggleButton">
+          <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                  BorderBrush="Transparent" BorderThickness="1" CornerRadius="3">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.PanelAlt}" />
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- ============ 文本框 ============ -->
   <Style TargetType="TextBox">
     <Setter Property="Background" Value="{DynamicResource Brush.PanelAlt}" />
@@ -235,7 +299,7 @@
               <RowDefinition Height="Auto" />
               <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Border Background="{DynamicResource Brush.Panel}">
+            <Border Background="{DynamicResource Brush.Surface}">
               <TabPanel IsItemsHost="True" Margin="4,4,4,0" />
             </Border>
             <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1"
@@ -273,17 +337,163 @@
 
   <!-- ============ 菜单 ============ -->
   <Style TargetType="Menu">
-    <Setter Property="Background" Value="{DynamicResource Brush.Panel}" />
+    <Setter Property="Background" Value="{DynamicResource Brush.MenuBar}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}" />
   </Style>
 
+  <!--
+    菜单项必须换模板：默认模板的下拉层用的是系统色（浅底），
+    深色主题下会变成"浅色底 + 浅色字"，几乎看不见。
+  -->
   <Style TargetType="MenuItem">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}" />
+    <Setter Property="Padding" Value="10,6" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="MenuItem">
+          <Grid SnapsToDevicePixels="True">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Border x:Name="Bd" Grid.ColumnSpan="4" CornerRadius="3"
+                    Background="{TemplateBinding Background}" />
+
+            <!-- 勾选列（可勾选的菜单项在这里打勾，和 Qt 一样与图标分开） -->
+            <Border x:Name="CheckSpacer" Grid.Column="0" Width="20" />
+            <Path x:Name="CheckMark" Grid.Column="0" Data="M 1,5 L 4.5,8.5 L 10,2"
+                  Stroke="{DynamicResource Brush.Accent}" StrokeThickness="1.7"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  Visibility="Collapsed" />
+
+            <!-- 图标列：内容由 MenuItem.Icon 提供 -->
+            <ContentPresenter x:Name="IconHost" Grid.Column="1" Width="24"
+                              ContentSource="Icon" HorizontalAlignment="Center"
+                              VerticalAlignment="Center" />
+
+            <ContentPresenter x:Name="HeaderHost" Grid.Column="2" ContentSource="Header"
+                              RecognizesAccessKey="True" VerticalAlignment="Center"
+                              Margin="{TemplateBinding Padding}" />
+
+            <TextBlock x:Name="Gesture" Grid.Column="3" Text="{TemplateBinding InputGestureText}"
+                       Foreground="{DynamicResource Brush.Muted}"
+                       Margin="20,0,10,0" VerticalAlignment="Center" />
+
+            <!-- 有子菜单时右侧的小箭头 -->
+            <Path x:Name="Arrow" Grid.Column="3" Data="M 0,0 L 4,4 L 0,8"
+                  Stroke="{DynamicResource Brush.Muted}" StrokeThickness="1.4"
+                  Margin="20,0,4,0" VerticalAlignment="Center" Visibility="Collapsed" />
+
+            <Popup x:Name="PART_Popup" AllowsTransparency="True" Focusable="False"
+                   IsOpen="{TemplateBinding IsSubmenuOpen}"
+                   Placement="Bottom" VerticalOffset="1" PopupAnimation="Fade">
+              <Border Background="{DynamicResource Brush.Panel}"
+                      BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
+                      CornerRadius="4" Padding="3" MinWidth="160">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                  <ItemsPresenter Grid.IsSharedSizeScope="True"
+                                  KeyboardNavigation.DirectionalNavigation="Cycle" />
+                </ScrollViewer>
+              </Border>
+            </Popup>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <!-- 菜单栏上的顶层项（带子菜单） -->
+            <Trigger Property="Role" Value="TopLevelHeader">
+              <Setter Property="Padding" Value="10,6" />
+              <Setter TargetName="CheckSpacer" Property="Visibility" Value="Collapsed" />
+              <Setter TargetName="IconHost" Property="Visibility" Value="Collapsed" />
+              <Setter TargetName="Gesture" Property="Visibility" Value="Collapsed" />
+              <Setter TargetName="Arrow" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <!-- 菜单栏上的顶层项（无子菜单） -->
+            <Trigger Property="Role" Value="TopLevelItem">
+              <Setter Property="Padding" Value="10,6" />
+              <Setter TargetName="CheckSpacer" Property="Visibility" Value="Collapsed" />
+              <Setter TargetName="IconHost" Property="Visibility" Value="Collapsed" />
+              <Setter TargetName="Gesture" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <!-- 弹出层里带子菜单的项 -->
+            <Trigger Property="Role" Value="SubmenuHeader">
+              <Setter Property="Padding" Value="4,6" />
+              <Setter TargetName="Gesture" Property="Visibility" Value="Collapsed" />
+              <Setter TargetName="Arrow" Property="Visibility" Value="Visible" />
+              <Setter TargetName="PART_Popup" Property="Placement" Value="Right" />
+              <Setter TargetName="PART_Popup" Property="VerticalOffset" Value="-4" />
+            </Trigger>
+            <!-- 弹出层里的普通项 -->
+            <Trigger Property="Role" Value="SubmenuItem">
+              <Setter Property="Padding" Value="4,6" />
+              <Setter TargetName="Arrow" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="IsHighlighted" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+            </Trigger>
+            <Trigger Property="IsSubmenuOpen" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- 右键菜单：默认模板同样是系统浅色，需要单独换掉 -->
+  <Style TargetType="ContextMenu">
+    <Setter Property="Background" Value="{DynamicResource Brush.Panel}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ContextMenu">
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                  CornerRadius="4" Padding="3">
+            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- 菜单里的分隔线由 WPF 用 MenuItem.SeparatorStyleKey 单独取样式，两个键都要给 -->
+  <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+    <Setter Property="Height" Value="1" />
+    <Setter Property="Margin" Value="8,4" />
+    <Setter Property="Background" Value="{DynamicResource Brush.Border}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Separator">
+          <Border Background="{TemplateBinding Background}" Height="1" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <Style TargetType="Separator">
+    <Setter Property="Height" Value="1" />
+    <Setter Property="Margin" Value="8,4" />
     <Setter Property="Background" Value="{DynamicResource Brush.Border}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Separator">
+          <Border Background="{TemplateBinding Background}" Height="1" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <Style TargetType="StatusBar">
@@ -297,7 +507,9 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
   </Style>
 
-  <Style TargetType="Window">
+  <!-- 窗口样式：必须显式引用（WPF 的隐式样式按精确类型匹配，
+       MainWindow 之类的派生类拿不到 TargetType="Window" 的隐式样式）。 -->
+  <Style x:Key="Theme.Window" TargetType="Window">
     <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.Foreground}" />
     <Setter Property="FontFamily" Value="Microsoft YaHei UI" />

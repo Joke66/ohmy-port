@@ -41,6 +41,12 @@
   <SolidColorBrush x:Key="Brush.DangerPressed" Color="{StaticResource Color.DangerPressed}" />
   <SolidColorBrush x:Key="Brush.DangerForeground" Color="{StaticResource Color.DangerForeground}" />
   <SolidColorBrush x:Key="Brush.LogBackground" Color="{StaticResource Color.LogBackground}" />
+  <!-- 大面积容器用的"表面"色：默认与 Panel / LogBackground 一致；
+       开启背景皮肤时由 ThemeService 换成带透明度的版本，让背景图露出来。 -->
+  <SolidColorBrush x:Key="Brush.Surface" Color="{StaticResource Color.Panel}" />
+  <SolidColorBrush x:Key="Brush.LogSurface" Color="{StaticResource Color.LogBackground}" />
+  <!-- 菜单栏单独一个键：开背景皮肤时换成高透明度版本（下拉层仍用不透明的 Brush.Panel） -->
+  <SolidColorBrush x:Key="Brush.MenuBar" Color="{StaticResource Color.Panel}" />
   <SolidColorBrush x:Key="Brush.LogTx" Color="{StaticResource Color.LogTx}" />
   <SolidColorBrush x:Key="Brush.LogSys" Color="{StaticResource Color.LogSys}" />
   <SolidColorBrush x:Key="Brush.LogTimestamp" Color="{StaticResource Color.LogTimestamp}" />

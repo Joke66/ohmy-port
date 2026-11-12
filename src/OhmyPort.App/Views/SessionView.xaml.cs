@@ -1023,6 +1023,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     {
         foreach (var log in new[] { LogText, MatchedText })
         {
+            log.ApplyTheme();
             log.TimestampBrush = ThemeService.GetBrush("Brush.LogTimestamp");
             log.TxBrush = ThemeService.GetBrush("Brush.LogTx");
             log.SysBrush = ThemeService.GetBrush("Brush.LogSys");

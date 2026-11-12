@@ -1,9 +1,11 @@
 ﻿<Window x:Class="OhmyPort.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="OhmyPort v1.8.7"
+        xmlns:app="clr-namespace:OhmyPort.App"
+        Title="OhmyPort v1.8.8"
         Width="980" Height="720" MinWidth="760" MinHeight="480"
         WindowStartupLocation="CenterScreen"
+        Style="{StaticResource Theme.Window}"
         Icon="Assets/my-icon.ico">
   <Grid>
     <Image x:Name="BgLayer" Stretch="UniformToFill" IsHitTestVisible="False"
@@ -13,64 +15,125 @@
       </Image.Effect>
     </Image>
 
+    <!-- 背景遮罩：垫在背景图之上、所有界面之下，浓度由「设置 → 背景皮肤」控制 -->
+    <Rectangle x:Name="BgVeilLayer" Fill="{DynamicResource Brush.Window}"
+               IsHitTestVisible="False" Opacity="0" Visibility="Collapsed" />
+
     <DockPanel>
 
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="文件(_F)">
-        <MenuItem Header="保存日志" InputGestureText="Ctrl+S" Click="OnSaveLogClick" />
-        <MenuItem Header="打开日志目录" Click="OnOpenLogDirClick" />
+        <MenuItem Header="保存日志" InputGestureText="Ctrl+S" app:IconGlyph.Name="save"
+                  Click="OnSaveLogClick" />
+        <MenuItem Header="打开日志目录" app:IconGlyph.Name="folder" Click="OnOpenLogDirClick" />
         <Separator />
-        <MenuItem Header="导出配置..." Click="OnExportConfigClick" />
-        <MenuItem Header="导入配置..." Click="OnImportConfigClick" />
+        <MenuItem Header="导出配置..." app:IconGlyph.Name="export" Click="OnExportConfigClick" />
+        <MenuItem Header="导入配置..." app:IconGlyph.Name="import" Click="OnImportConfigClick" />
         <Separator />
-        <MenuItem Header="新建串口会话" InputGestureText="Ctrl+T" Click="OnNewSessionClick" />
+        <MenuItem Header="新建串口会话" InputGestureText="Ctrl+T" app:IconGlyph.Name="add"
+                  Click="OnNewSessionClick" />
         <MenuItem Header="关闭当前会话" Click="OnCloseCurrentSessionClick" />
         <Separator />
-        <MenuItem Header="退出" Click="OnExitClick" />
+        <MenuItem Header="退出" app:IconGlyph.Name="quit" Click="OnExitClick" />
       </MenuItem>
       <MenuItem Header="视图(_V)">
-        <MenuItem x:Name="ParamsMenu" Header="串口参数" IsCheckable="True" Click="OnToggleParamsClick" />
-        <MenuItem x:Name="FilterMenu" Header="关键词过滤" IsCheckable="True" Click="OnToggleFilterClick" />
+        <MenuItem x:Name="ParamsMenu" Header="串口参数" IsCheckable="True"
+                  app:IconGlyph.Name="sliders" Click="OnToggleParamsClick" />
+        <MenuItem x:Name="FilterMenu" Header="关键词过滤" IsCheckable="True"
+                  app:IconGlyph.Name="filter" Click="OnToggleFilterClick" />
         <MenuItem x:Name="SendMenu" Header="消息发送" IsCheckable="True" IsChecked="True"
-                  Click="OnToggleSendClick" />
-        <MenuItem x:Name="SendAssistMenu" Header="发送辅助" IsCheckable="True" Click="OnToggleSendAssistClick" />
+                  app:IconGlyph.Name="message" Click="OnToggleSendClick" />
+        <MenuItem x:Name="SendAssistMenu" Header="发送辅助" IsCheckable="True"
+                  app:IconGlyph.Name="send" Click="OnToggleSendAssistClick" />
         <Separator />
-        <MenuItem x:Name="HexViewMenu" Header="HEX 显示" IsCheckable="True" Click="OnToggleHexViewClick" />
-        <MenuItem x:Name="FixedMenu" Header="固定显示" IsCheckable="True" Click="OnToggleFixedClick" />
+        <MenuItem x:Name="HexViewMenu" Header="HEX 显示" IsCheckable="True"
+                  app:IconGlyph.Name="hex" Click="OnToggleHexViewClick" />
+        <MenuItem x:Name="FixedMenu" Header="固定显示" IsCheckable="True"
+                  app:IconGlyph.Name="fixed" Click="OnToggleFixedClick" />
         <MenuItem x:Name="WrapMenu" Header="自动换行" IsCheckable="True" IsChecked="True"
-                  Click="OnToggleWrapClick" />
+                  app:IconGlyph.Name="wrap" Click="OnToggleWrapClick" />
       </MenuItem>
       <MenuItem Header="设置(_S)">
-        <MenuItem Header="主题">
+        <MenuItem Header="主题" app:IconGlyph.Name="palette">
           <MenuItem x:Name="ThemeAutoMenu" Header="跟随系统" IsCheckable="True" Click="OnThemeClick" Tag="auto" />
           <MenuItem x:Name="ThemeBlackMenu" Header="深色" IsCheckable="True" Click="OnThemeClick" Tag="black" />
           <MenuItem x:Name="ThemeDayMenu" Header="白天" IsCheckable="True" Click="OnThemeClick" Tag="day" />
           <MenuItem x:Name="ThemeEyeMenu" Header="护眼" IsCheckable="True" Click="OnThemeClick" Tag="eye" />
         </MenuItem>
-        <MenuItem Header="背景皮肤..." Click="OnOpenBackgroundClick" />
+        <MenuItem Header="背景皮肤..." app:IconGlyph.Name="palette" Click="OnOpenBackgroundClick" />
         <Separator />
-        <MenuItem Header="字体..." Click="OnChooseFontClick" />
-        <MenuItem Header="字体增大" InputGestureText="Ctrl+=" Click="OnZoomInClick" />
-        <MenuItem Header="字体减小" InputGestureText="Ctrl+-" Click="OnZoomOutClick" />
-        <MenuItem Header="重置字体" InputGestureText="Ctrl+0" Click="OnResetZoomClick" />
+        <MenuItem Header="字体..." app:IconGlyph.Name="font" Click="OnChooseFontClick" />
+        <MenuItem Header="字体增大" InputGestureText="Ctrl+=" app:IconGlyph.Name="font" Click="OnZoomInClick" />
+        <MenuItem Header="字体减小" InputGestureText="Ctrl+-" app:IconGlyph.Name="font" Click="OnZoomOutClick" />
+        <MenuItem Header="重置字体" InputGestureText="Ctrl+0" app:IconGlyph.Name="font" Click="OnResetZoomClick" />
         <Separator />
         <MenuItem x:Name="AutoRecordMenu" Header="连接后自动保存日志" IsCheckable="True"
-                  Click="OnToggleAutoRecordClick" />
-        <MenuItem Header="日志保存目录..." Click="OnChooseLogDirClick" />
-        <MenuItem Header="日志分片大小..." Click="OnSetShardSizeClick" />
-        <MenuItem Header="日志保留策略..." Click="OnSetLogRetentionClick" />
+                  app:IconGlyph.Name="record" Click="OnToggleAutoRecordClick" />
+        <MenuItem Header="日志保存目录..." app:IconGlyph.Name="folder" Click="OnChooseLogDirClick" />
+        <MenuItem Header="日志分片大小..." app:IconGlyph.Name="shard" Click="OnSetShardSizeClick" />
+        <MenuItem Header="日志保留策略..." app:IconGlyph.Name="retention" Click="OnSetLogRetentionClick" />
         <Separator />
         <MenuItem x:Name="TrayMenu" Header="关闭时最小化到托盘" IsCheckable="True"
-                  Click="OnToggleTrayClick" />
+                  app:IconGlyph.Name="tray" Click="OnToggleTrayClick" />
         <MenuItem x:Name="CloseConfirmMenu" Header="关闭时询问" IsCheckable="True"
-                  Click="OnToggleCloseConfirmClick" />
+                  app:IconGlyph.Name="question" Click="OnToggleCloseConfirmClick" />
       </MenuItem>
       <MenuItem Header="帮助(_H)">
-        <MenuItem Header="关于 OhmyPort" Click="OnAboutClick" />
+        <MenuItem Header="关于 OhmyPort" app:IconGlyph.Name="info" Click="OnAboutClick" />
       </MenuItem>
     </Menu>
 
-    <Border DockPanel.Dock="Bottom" Height="26" Background="{DynamicResource Brush.Panel}">
+    <!-- 主工具栏：与原版一致，图标按钮 + 视图开关 -->
+    <Border DockPanel.Dock="Top" Background="{DynamicResource Brush.Surface}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
+            Padding="6,3">
+      <StackPanel Orientation="Horizontal">
+        <Button Style="{StaticResource ToolStrip.Button}" ToolTip="保存日志"
+                Click="OnSaveLogClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.save}" />
+        </Button>
+        <Button Style="{StaticResource ToolStrip.Button}" ToolTip="打开日志目录"
+                Click="OnOpenLogDirClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.folder}" />
+        </Button>
+
+        <Rectangle Width="1" Margin="6,4" Fill="{DynamicResource Brush.Border}" />
+
+        <ToggleButton x:Name="TbParams" Tag="params" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="串口参数" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.sliders}" />
+        </ToggleButton>
+        <ToggleButton x:Name="TbFilter" Tag="filter" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="关键词过滤" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.filter}" />
+        </ToggleButton>
+        <ToggleButton x:Name="TbSend" Tag="send" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="消息发送" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.message}" />
+        </ToggleButton>
+        <ToggleButton x:Name="TbSendAssist" Tag="sendAssist" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="发送辅助" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.send}" />
+        </ToggleButton>
+
+        <Rectangle Width="1" Margin="6,4" Fill="{DynamicResource Brush.Border}" />
+
+        <ToggleButton x:Name="TbHex" Tag="hex" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="HEX 显示" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.hex}" />
+        </ToggleButton>
+        <ToggleButton x:Name="TbFixed" Tag="fixed" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="固定显示" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.fixed}" />
+        </ToggleButton>
+        <ToggleButton x:Name="TbWrap" Tag="wrap" Style="{StaticResource ToolStrip.Toggle}"
+                      ToolTip="自动换行" Click="OnToolbarToggleClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.wrap}" />
+        </ToggleButton>
+      </StackPanel>
+    </Border>
+
+    <Border DockPanel.Dock="Bottom" Height="26" Background="{DynamicResource Brush.Surface}">
       <Grid Margin="10,0">
         <TextBlock x:Name="StatusLabel" HorizontalAlignment="Left" VerticalAlignment="Center"
                    Foreground="{DynamicResource Brush.Muted}" Text="就绪" />
@@ -125,7 +188,7 @@
 
       <!-- 发送辅助（全局面板，视图菜单「发送辅助」控制显示） -->
       <Border x:Name="SendAssistPanel" Grid.Row="1" Margin="0,4,0,0"
-              Background="{DynamicResource Brush.Panel}" BorderBrush="{DynamicResource Brush.Border}"
+              Background="{DynamicResource Brush.Surface}" BorderBrush="{DynamicResource Brush.Border}"
               BorderThickness="1" CornerRadius="3" Visibility="Collapsed">
         <Grid Margin="8,6">
           <Grid.RowDefinitions>

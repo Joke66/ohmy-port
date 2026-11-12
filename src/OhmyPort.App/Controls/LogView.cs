@@ -147,6 +147,21 @@ public sealed class LogView : TextEditor
         }
     }
 
+    /// <summary>
+    /// 按当前主题刷新日志区外观。AvalonEdit 不参与全局控件样式表（它的默认样式是白底黑字），
+    /// 背景 / 前景 / 光标 / 选区都必须显式设置，否则深色主题下会出现白底白字。
+    /// </summary>
+    public void ApplyTheme()
+    {
+        // 背景由外层 Border 用 Brush.LogSurface 画（背景皮肤开启时是半透明的），
+        // 编辑器自身保持透明，否则会把背景图完全盖住。
+        Background = Brushes.Transparent;
+        SetResourceReference(ForegroundProperty, "Brush.Foreground");
+        TextArea.SetResourceReference(TextArea.SelectionBrushProperty, "Brush.Accent");
+        TextArea.SetResourceReference(TextArea.SelectionForegroundProperty, "Brush.AccentForeground");
+        TextArea.Caret.CaretBrush = TryFindResource("Brush.Foreground") as Brush;
+    }
+
     /// <summary>清空显示区（不影响调用方缓存的原始记录）。</summary>
     public void ClearAll() => Document.Text = "";
 

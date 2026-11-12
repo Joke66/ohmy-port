@@ -1,4 +1,4 @@
-# ============================================
+﻿# ============================================
 #  OhmyPort（C# / WPF 版）一键发布脚本 (PowerShell)
 #
 #  产物：
@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
 $AppName = "OhmyPort"
-$Version = "1.8.7"          # 与 OhmyPort.Core/Constants.cs 中 AppInfo.Version 保持一致
+$Version = "1.8.8"          # 与 OhmyPort.Core/Constants.cs 中 AppInfo.Version 保持一致
 $DotNet  = "dotnet"
 
 # [1/4] 检查 .NET SDK

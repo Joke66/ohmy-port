@@ -1,10 +1,10 @@
-namespace OhmyPort.Core;
+﻿namespace OhmyPort.Core;
 
 /// <summary>应用元信息与外部地址。</summary>
 public static class AppInfo
 {
     public const string Name = "OhmyPort";
-    public const string Version = "1.8.7";
+    public const string Version = "1.8.8";
     public const string Author = "ShineZhang";
     public const string Date = "2026-11-12";
     public const string Url = "https://gitee.com/Shine_Zhang/ohmy-port";

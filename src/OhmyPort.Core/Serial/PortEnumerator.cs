@@ -8,6 +8,9 @@ namespace OhmyPort.Core.Serial;
 public readonly record struct PortInfo(string PortName, string Description)
 {
     public string Display => Description == PortName ? PortName : $"{PortName}  {Description}";
+
+    /// <summary>下拉框 / 文本框等只认 ToString 的场合也显示友好文本，而不是 record 的字段列表。</summary>
+    public override string ToString() => Display;
 }
 
 /// <summary>串口枚举：系统端口名 + WMI 友好名（对应 pyserial 的 list_ports.comports）。</summary>
