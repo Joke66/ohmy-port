@@ -91,7 +91,9 @@ src/OhmyPort.App/                   WPF 界面层
     ├── BackgroundDialog.cs         背景皮肤对话框
     ├── CloseConfirmDialog.cs       关闭确认（托盘/退出/不再提示）
     ├── ComboSelectDialog.cs        下拉选择对话框（保留策略/字体）
-    └── NumberInputDialog.cs        数字输入对话框（分片大小）
+    ├── NumberInputDialog.cs        数字输入对话框（分片大小）
+    ├── AboutDialog.xaml / .xaml.cs 关于对话框（GPL 开源声明 + 可点击链接 + 无担保）
+    └── LicenseViewer.cs            开源许可查看器（读嵌入的 LICENSE 全文）
 tests/OhmyPort.Core.Tests/          xUnit（移植自原版 pytest）
 ├── CommandPagesTests.cs / FrameParserTests.cs / LogFilterTests.cs
 ├── PlotRuleTests.cs / SendCodecTests.cs / TextUtilTests.cs

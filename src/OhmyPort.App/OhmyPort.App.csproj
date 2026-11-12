@@ -33,4 +33,9 @@
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 开源许可全文随程序一起发布（单文件模式下嵌入，运行时读取展示） -->
+    <EmbeddedResource Include="..\..\LICENSE" LogicalName="LICENSE" />
+  </ItemGroup>
+
 </Project>

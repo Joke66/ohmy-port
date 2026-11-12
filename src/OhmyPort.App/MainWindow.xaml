@@ -99,6 +99,10 @@
       </MenuItem>
       <MenuItem Header="帮助(_H)">
         <MenuItem Header="关于 OhmyPort" app:IconGlyph.Name="info" Click="OnAboutClick" />
+        <MenuItem Header="开源许可" app:IconGlyph.Name="info" Click="OnOpenLicenseClick" />
+        <MenuItem Header="项目主页" app:IconGlyph.Name="export" Click="OnOpenHomepageClick" />
+        <Separator />
+        <MenuItem Header="检查更新" app:IconGlyph.Name="update" Click="OnCheckUpdateClick" />
       </MenuItem>
     </Menu>
 

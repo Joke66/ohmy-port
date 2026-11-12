@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -533,12 +534,81 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
 
-    private void OnAboutClick(object sender, RoutedEventArgs e) =>
-        MessageBox.Show(
-            this,
-            $"{AppInfo.Name} v{AppInfo.Version}\n\n作者：{AppInfo.Author}\n项目主页：{AppInfo.Url}\n\n" +
-            "C# / WPF 版本（.NET 10）。",
-            "关于", MessageBoxButton.OK, MessageBoxImage.Information);
+    private void OnAboutClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AboutDialog { Owner = this };
+        dialog.ShowDialog();
+    }
+
+    /// <summary>展示开源许可全文（GPL-2.0，随程序嵌入）。</summary>
+    private void OnOpenLicenseClick(object sender, RoutedEventArgs e)
+    {
+        var viewer = new LicenseViewer { Owner = this };
+        viewer.ShowDialog();
+    }
+
+    /// <summary>在浏览器打开项目主页。</summary>
+    private void OnOpenHomepageClick(object sender, RoutedEventArgs e) =>
+        OpenUrl(AppInfo.Url);
+
+    /// <summary>检查更新：请求 Gitee API，比较最新 tag 与当前版本。</summary>
+    private async void OnCheckUpdateClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("OhmyPort");
+            var json = await client.GetStringAsync(AppInfo.UpdateApi);
+
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
+            var htmlUrl = root.TryGetProperty("html_url", out var u) ? u.GetString() ?? "" : "";
+
+            var latest = TextUtil.ParseVersion(tag);
+            var current = TextUtil.ParseVersion(AppInfo.Version);
+            if (latest.Length == 0)
+            {
+                MessageBox.Show(this, $"当前版本 v{AppInfo.Version}。未能解析远程版本信息。",
+                                "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (TextUtil.CompareVersions(latest, current) > 0)
+            {
+                var result = MessageBox.Show(
+                    this,
+                    $"发现新版本：{tag}\n当前版本：v{AppInfo.Version}\n\n是否打开发布页下载？",
+                    "检查更新", MessageBoxButton.YesNo, MessageBoxImage.Information);
+                if (result == MessageBoxResult.Yes && htmlUrl.Length > 0)
+                {
+                    OpenUrl(htmlUrl);
+                }
+            }
+            else
+            {
+                MessageBox.Show(this, $"已是最新版本（v{AppInfo.Version}）。",
+                                "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            MessageBox.Show(this, $"检查更新失败：{ex.Message}\n\n请稍后重试或手动访问项目主页。",
+                            "检查更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private static void OpenUrl(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch
+        {
+            // 打不开就忽略
+        }
+    }
 
     /// <summary>选择自定义强调色（覆盖主题默认的 Brush.Accent 系列）。</summary>
     private void OnChooseAccentClick(object sender, RoutedEventArgs e)

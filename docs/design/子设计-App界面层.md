@@ -26,6 +26,7 @@
 - 强调色：`OnChooseAccentClick` 用 WinForms `ColorDialog` 选色 → `ThemeService.SetAccent` → 保存 `accent_color`。
 - 窗口记忆：`RestoreWindowPlacement` 启动时恢复（越界回退居中），`SaveWindowPlacement` 退出时记录 `window_left/top/width/height`。
 - 时间戳：视图菜单「时间戳」子菜单（完整/仅秒/不显示）改当前会话 `TimestampMode`，`SyncTimestampMenu` 随会话切换同步。
+- 帮助菜单：关于（`AboutDialog`）/ 开源许可（`LicenseViewer`）/ 项目主页（`OpenUrl(AppInfo.Url)`）/ 检查更新（`OnCheckUpdateClick` 请求 `AppInfo.UpdateApi`，`TextUtil` 比较版本后提示）。
 
 ## 3. 会话视图 — `Views/SessionView.xaml` / `.xaml.cs`
 
@@ -101,6 +102,8 @@
 - `CloseConfirmDialog`：关闭时「最小化到托盘 / 直接退出」+ 不再提示。
 - `ComboSelectDialog`：通用下拉选择（日志保留策略/字体）。
 - `NumberInputDialog`：通用数字输入（日志分片大小，钳制范围）。
+- `AboutDialog`：关于对话框——标识 + 版本 + 开源（GPL-2.0）声明 + 无担保 + 作者/技术栈 + 可点击链接 + 免责；「开源许可」按钮打开 `LicenseViewer`。
+- `LicenseViewer`：读嵌入的 `LICENSE` 资源（`Assembly.GetManifestResourceStream("LICENSE")`）只读展示，满足 GPL 合规、离线可用。
 - `ChecksumCalculatorDialog`：校验计算器，HEX 输入 → SUM8/XOR8/CRC16-Modbus 结果 + 复制。
 - `ProtocolFieldDialog`：协议字段编辑，一行一个字段（名称/偏移/类型/长度/大端/系数/偏移量），确定时统一校验；`FieldRow` 保存文本态输入。
 - `PlotRuleDialog`：曲线提取规则编辑，一行一条曲线（名称 + 正则/关键词）。
@@ -113,6 +116,6 @@
 
 ## 9. 资源与主题文件
 
-- `Themes/Base.xaml`：控件通用样式（窗口、按钮、标签等）。
+- `Themes/Base.xaml`：控件通用样式（窗口、按钮、标签、滚动条等）。ScrollBar 用细圆角滑块，颜色跟随主题画刷（Hover/Accent），避免深色主题下系统滚动条突兀。
 - `Themes/Dark.xaml` / `Light.xaml` / `Eye.xaml`：三套配色字典（画刷键如 `Brush.Window`/`Brush.Surface`/`Brush.LogSurface`/`Brush.LogTimestamp`/`Brush.LogTx`/`Brush.LogSys`/`Brush.HighlightBg`/`Brush.HighlightFg`）。
 - `Assets/Icons.xaml`：图标几何资源（`Icon.save`、`Icon.folder`、`Icon.sliders` 等）。
