@@ -817,6 +817,27 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             return;
         }
 
+        if (SendContent(text, addHistory: true))
+        {
+            AddSendHistory(text);
+        }
+    }
+
+    /// <summary>发送命令辅助里的命令内容（不写入发送历史）。</summary>
+    public void SendCommandContent(string content)
+    {
+        if (string.IsNullOrEmpty(content))
+        {
+            AddSystem("命令内容为空");
+            return;
+        }
+
+        SendContent(content, addHistory: false);
+    }
+
+    /// <summary>按当前 HEX / 换行 / 编码设置编码并发送；返回是否已提交。</summary>
+    private bool SendContent(string text, bool addHistory)
+    {
         byte[] data;
         if (HexSendCheck.IsChecked == true)
         {
@@ -824,7 +845,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             if (parsed is null)
             {
                 AddSystem("HEX 格式无效（示例：01 03 00 0A）");
-                return;
+                return false;
             }
 
             data = parsed;
@@ -838,16 +859,18 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         if (!_monitor.IsConnected)
         {
             AddSystem("串口未打开，无法发送");
-            return;
+            return false;
         }
 
         if (_monitor.Send(data))
         {
             _txBytes += data.Length;
             _pending.Enqueue(new LogRecord(DateTime.Now, LogDirection.Tx, data, null));
-            AddSendHistory(text);
             RaiseStatusChanged();
+            return true;
         }
+
+        return false;
     }
 
     private void AddSendHistory(string text)
@@ -865,6 +888,9 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
     private void AddSystem(string text) =>
         _pending.Enqueue(new LogRecord(DateTime.Now, LogDirection.Sys, null, text));
+
+    /// <summary>主窗口全局反馈：写入当前会话的系统日志（供命令辅助等模块调用）。</summary>
+    public void AddSystemText(string text) => AddSystem(text);
 
     // ---------- 通知 ----------
 

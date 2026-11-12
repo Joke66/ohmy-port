@@ -1,0 +1,50 @@
+<Window x:Class="OhmyPort.App.Views.CommandEditDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="添加命令" Width="460" Height="300"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False">
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <Grid Grid.Row="0" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="命令名称" Margin="0,0,8,0" />
+      <TextBox x:Name="NameEdit" Grid.Column="1" />
+    </Grid>
+
+    <Grid x:Name="ContentRow" Grid.Row="1" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" VerticalAlignment="Top" Text="命令内容" Margin="0,2,8,0" />
+      <TextBox x:Name="ContentEdit" Grid.Column="1" Height="80"
+               AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+               ToolTip="支持 \\r \\n \\t \\0 \\xNN 转义；HEX 发送模式下输入如 01 03 00 0A" />
+    </Grid>
+
+    <Grid x:Name="PageRow" Grid.Row="2" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="所属页" Margin="0,0,8,0" />
+      <ComboBox x:Name="PageCombo" Grid.Column="1" />
+    </Grid>
+
+    <StackPanel Grid.Row="4" HorizontalAlignment="Right" Orientation="Horizontal">
+      <Button x:Name="OkButton" Content="确定" Tag="primary" Width="80" Margin="0,0,8,0" />
+      <Button x:Name="CancelButton" Content="取消" Width="80" />
+    </StackPanel>
+  </Grid>
+</Window>

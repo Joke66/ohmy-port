@@ -11,6 +11,9 @@
       <MenuItem Header="文件(_F)">
         <MenuItem Header="保存日志" InputGestureText="Ctrl+S" Click="OnSaveLogClick" />
         <Separator />
+        <MenuItem Header="导出配置..." Click="OnExportConfigClick" />
+        <MenuItem Header="导入配置..." Click="OnImportConfigClick" />
+        <Separator />
         <MenuItem Header="新建串口会话" InputGestureText="Ctrl+T" Click="OnNewSessionClick" />
         <MenuItem Header="关闭当前会话" Click="OnCloseCurrentSessionClick" />
         <Separator />
@@ -21,6 +24,7 @@
         <MenuItem x:Name="FilterMenu" Header="关键词过滤" IsCheckable="True" Click="OnToggleFilterClick" />
         <MenuItem x:Name="SendMenu" Header="消息发送" IsCheckable="True" IsChecked="True"
                   Click="OnToggleSendClick" />
+        <MenuItem x:Name="SendAssistMenu" Header="发送辅助" IsCheckable="True" Click="OnToggleSendAssistClick" />
         <Separator />
         <MenuItem x:Name="HexViewMenu" Header="HEX 显示" IsCheckable="True" Click="OnToggleHexViewClick" />
         <MenuItem x:Name="FixedMenu" Header="固定显示" IsCheckable="True" Click="OnToggleFixedClick" />
@@ -47,41 +51,70 @@
     </Border>
 
     <Grid>
-      <TabControl x:Name="SessionTabs" Padding="0">
-        <TabControl.ItemContainerStyle>
-          <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
-            <Setter Property="HeaderTemplate">
-              <Setter.Value>
-                <DataTemplate>
-                  <StackPanel Orientation="Horizontal">
-                    <Ellipse x:Name="ConnDot" Width="8" Height="8" Margin="0,0,6,0"
-                             VerticalAlignment="Center" Fill="{StaticResource Brush.Connected}"
-                             Visibility="Collapsed" />
-                    <TextBlock x:Name="TitleText" VerticalAlignment="Center" Text="{Binding Title}"
-                               Foreground="{StaticResource Brush.Muted}" />
-                    <Button Width="16" Height="16" Margin="8,0,0,0" Padding="0"
-                            Background="Transparent" BorderThickness="0" FontSize="10"
-                            Content="×" Tag="{Binding}" Click="OnCloseTabClick"
-                            ToolTip="关闭会话（至少保留一个）" />
-                  </StackPanel>
-                  <DataTemplate.Triggers>
-                    <DataTrigger Binding="{Binding IsConnected}" Value="True">
-                      <Setter TargetName="ConnDot" Property="Visibility" Value="Visible" />
-                      <Setter TargetName="TitleText" Property="Foreground"
-                              Value="{StaticResource Brush.Connected}" />
-                    </DataTrigger>
-                  </DataTemplate.Triggers>
-                </DataTemplate>
-              </Setter.Value>
-            </Setter>
-          </Style>
-        </TabControl.ItemContainerStyle>
-      </TabControl>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
 
-      <Button x:Name="AddSessionButton" Width="26" Height="26" Margin="0,4,6,0"
-              HorizontalAlignment="Right" VerticalAlignment="Top"
-              Background="Transparent" BorderThickness="0" FontSize="15"
-              Content="＋" ToolTip="添加串口会话" Click="OnNewSessionClick" />
+      <Grid Grid.Row="0">
+        <TabControl x:Name="SessionTabs" Padding="0">
+          <TabControl.ItemContainerStyle>
+            <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
+              <Setter Property="HeaderTemplate">
+                <Setter.Value>
+                  <DataTemplate>
+                    <StackPanel Orientation="Horizontal">
+                      <Ellipse x:Name="ConnDot" Width="8" Height="8" Margin="0,0,6,0"
+                               VerticalAlignment="Center" Fill="{StaticResource Brush.Connected}"
+                               Visibility="Collapsed" />
+                      <TextBlock x:Name="TitleText" VerticalAlignment="Center" Text="{Binding Title}"
+                                 Foreground="{StaticResource Brush.Muted}" />
+                      <Button Width="16" Height="16" Margin="8,0,0,0" Padding="0"
+                              Background="Transparent" BorderThickness="0" FontSize="10"
+                              Content="×" Tag="{Binding}" Click="OnCloseTabClick"
+                              ToolTip="关闭会话（至少保留一个）" />
+                    </StackPanel>
+                    <DataTemplate.Triggers>
+                      <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                        <Setter TargetName="ConnDot" Property="Visibility" Value="Visible" />
+                        <Setter TargetName="TitleText" Property="Foreground"
+                                Value="{StaticResource Brush.Connected}" />
+                      </DataTrigger>
+                    </DataTemplate.Triggers>
+                  </DataTemplate>
+                </Setter.Value>
+              </Setter>
+            </Style>
+          </TabControl.ItemContainerStyle>
+        </TabControl>
+
+        <Button x:Name="AddSessionButton" Width="26" Height="26" Margin="0,4,6,0"
+                HorizontalAlignment="Right" VerticalAlignment="Top"
+                Background="Transparent" BorderThickness="0" FontSize="15"
+                Content="＋" ToolTip="添加串口会话" Click="OnNewSessionClick" />
+      </Grid>
+
+      <!-- 发送辅助（全局面板，视图菜单「发送辅助」控制显示） -->
+      <Border x:Name="SendAssistPanel" Grid.Row="1" Margin="0,4,0,0"
+              Background="{StaticResource Brush.Panel}" BorderBrush="{StaticResource Brush.Border}"
+              BorderThickness="1" CornerRadius="3" Visibility="Collapsed">
+        <Grid Margin="8,6">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <StackPanel Grid.Row="0" Margin="0,0,0,6" Orientation="Horizontal">
+            <Button x:Name="AddCommandButton" Content="添加命令" Click="OnAddCommandClick" />
+            <Button x:Name="AddPageButton" Margin="6,0,0,0" Content="添加页" Click="OnAddPageClick" />
+            <Button x:Name="CycleButton" Margin="6,0,0,0" Content="定时循环发送..." Click="OnOpenCycleDialogClick" />
+            <CheckBox x:Name="CycleIndicatorCheck" Margin="12,0,0,0" VerticalAlignment="Center"
+                      Content="循环发送中" IsEnabled="False" IsChecked="{Binding CycleEnabled, Mode=OneWay}" />
+          </StackPanel>
+
+          <TabControl x:Name="CommandTabs" Grid.Row="1" Padding="0" />
+        </Grid>
+      </Border>
     </Grid>
 
   </DockPanel>

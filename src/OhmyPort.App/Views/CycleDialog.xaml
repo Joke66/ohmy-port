@@ -1,0 +1,35 @@
+<Window x:Class="OhmyPort.App.Views.CycleDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="定时循环发送" Width="480" Height="440"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        ShowInTaskbar="False">
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+
+    <StackPanel Grid.Row="0" Margin="0,0,0,10" Orientation="Horizontal">
+      <CheckBox x:Name="EnableCheck" VerticalAlignment="Center" Content="启用定时循环发送" />
+      <TextBlock Margin="16,0,6,0" VerticalAlignment="Center" Text="间隔(ms)" />
+      <TextBox x:Name="IntervalEdit" Width="90" VerticalContentAlignment="Center"
+               ToolTip="最小 10ms，最大 3600000ms（1 小时）" />
+    </StackPanel>
+
+    <TextBlock Grid.Row="1" Margin="0,0,0,4" Text="勾选参与循环发送的命令："
+               Foreground="{StaticResource Brush.Muted}" />
+
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+      <ItemsControl x:Name="CommandList">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked}"
+                      ToolTip="{Binding Content}" Margin="0,2" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </Grid>
+</Window>
