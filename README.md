@@ -56,7 +56,23 @@ tests/OhmyPort.Core.Tests/  xUnit（移植自原版 pytest 用例）
 | M7 | 数值绘图窗口 | ⏳（可选） |
 | M8 | 日志录制 / 分片 / 保留策略 | ⏳ |
 | M9 | 四套主题、背景图、字体、托盘 | ⏳ |
-| M10 | 打包（dotnet publish + Inno Setup） | ⏳ |
+| M10 | 打包（dotnet publish + Inno Setup） | ✅ |
+
+## 打包与发布
+
+```cmd
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+产物（`release\OhmyPort_v<版本>\`）：
+
+| 文件 | 说明 |
+|---|---|
+| `OhmyPort.exe`（单文件，~67 MB） | 自包含，无需装 .NET 运行时，双击即用 |
+| `OhmyPort_v<版本>.zip` | 绿色免安装版压缩包 |
+| `OhmyPort_Setup_v<版本>.exe`（~62 MB） | Inno Setup 安装包（需本机装 Inno Setup 6） |
+
+发布实测：单文件 exe 67 MB，冷启动 ~1.6s；文件夹模式（`-p:PublishSingleFile=false`）155 MB、启动 ~1.2s——单文件用启动时间换体积，当前默认单文件。
 
 ## 已知差异
 

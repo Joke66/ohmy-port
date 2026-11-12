@@ -8,6 +8,9 @@
     <AssemblyName>OhmyPort</AssemblyName>
     <ApplicationIcon>Assets\my-icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>
