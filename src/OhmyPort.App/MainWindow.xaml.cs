@@ -1,14 +1,17 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using OhmyPort.App.Views;
 using OhmyPort.Core;
 using OhmyPort.Core.Models;
+using WinForms = System.Windows.Forms;
 
 namespace OhmyPort.App;
 
@@ -17,10 +20,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly List<SessionView> _sessions = [];
     private readonly ConfigService _configService = new();
     private readonly DispatcherTimer _cycleTimer;
+    private readonly DispatcherTimer _autoThemeTimer;
+    private WinForms.NotifyIcon? _notifyIcon;
     private AppConfig _config = new();
     private bool _cycleEnabled;
     private int _cycleInterval = 1000;
     private int _cycleIndex;
+    private bool _forceQuit;
     private CycleDialog? _cycleDialog;
 
     public MainWindow()
@@ -41,6 +47,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _cycleTimer.Tick += (_, _) => OnCycleTick();
 
         _config = _configService.Load();
+
+        // 主题
+        ThemeService.Apply(_config.Theme);
+        SyncThemeMenu();
+        ThemeService.ThemeChanged += OnThemeChanged;
+        _autoThemeTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(2),
+        };
+        _autoThemeTimer.Tick += (_, _) => ThemeService.RefreshIfAuto();
+        _autoThemeTimer.Start();
+
+        // 菜单状态（记录 / 托盘 / 关闭确认）
+        AutoRecordMenu.IsChecked = _config.AutoRecord;
+        TrayMenu.IsChecked = _config.CloseBehavior == "tray";
+        CloseConfirmMenu.IsChecked = _config.CloseConfirm;
+
         var count = Math.Max(1, _config.Sessions.Count);
         for (var i = 0; i < count; i++)
         {
@@ -52,14 +75,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ApplyRememberedState(_sessions[i], _config.Sessions[i]);
         }
 
-        // 全局：自动换行
+        // 全局：自动换行 + 日志设置 + 主题着色
         WrapMenu.IsChecked = _config.WrapEnabled;
-        foreach (var session in _sessions)
-        {
-            session.WrapEnabled = _config.WrapEnabled;
-        }
+        ApplyGlobalSettings();
 
         RebuildCommandTabs();
+        SetupTray();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -75,6 +96,50 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 _cycleEnabled = value;
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CycleEnabled)));
             }
+        }
+    }
+
+    /// <summary>当前日志保存目录（未自定义则默认数据目录下 Logs）。</summary>
+    private string LogDirPath =>
+        string.IsNullOrEmpty(_config.LogDir) ? AppPaths.DefaultLogDir : _config.LogDir;
+
+    /// <summary>把全局设置（换行 / 日志目录 / 分片 / 自动记录 / 主题着色）同步到所有会话。</summary>
+    private void ApplyGlobalSettings()
+    {
+        foreach (var session in _sessions)
+        {
+            session.WrapEnabled = _config.WrapEnabled;
+            session.LogDirectory = LogDirPath;
+            session.ShardMb = _config.ShardMb;
+            session.AutoRecord = _config.AutoRecord;
+            session.ApplyThemeColors();
+        }
+    }
+
+    private void SyncThemeMenu()
+    {
+        ThemeAutoMenu.IsChecked = ThemeService.ThemeKey == ThemeService.Auto;
+        ThemeBlackMenu.IsChecked = ThemeService.ThemeKey == ThemeService.Black;
+        ThemeDayMenu.IsChecked = ThemeService.ThemeKey == ThemeService.Day;
+        ThemeEyeMenu.IsChecked = ThemeService.ThemeKey == ThemeService.Eye;
+    }
+
+    private void OnThemeChanged()
+    {
+        SyncThemeMenu();
+        foreach (var session in _sessions)
+        {
+            session.ApplyThemeColors();
+        }
+    }
+
+    private void OnThemeClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string key })
+        {
+            _config.Theme = key;
+            ThemeService.Apply(key);
+            _configService.Save(_config);
         }
     }
 
@@ -109,7 +174,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void AddSession()
     {
-        var session = new SessionView { Index = _sessions.Count };
+        var session = new SessionView
+        {
+            Index = _sessions.Count,
+            LogDirectory = LogDirPath,
+            ShardMb = _config.ShardMb,
+            AutoRecord = _config.AutoRecord,
+            WrapEnabled = _config.WrapEnabled,
+        };
         session.TitleChanged += (_, _) => RefreshStatusBar();
         session.StatusChanged += (_, _) =>
         {
@@ -122,6 +194,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _sessions.Add(session);
         SessionTabs.Items.Add(new TabItem { Header = session, Content = session });
         SessionTabs.SelectedIndex = SessionTabs.Items.Count - 1;
+        session.ApplyThemeColors();
         SyncMenuState();
         RefreshStatusBar();
     }
@@ -280,6 +353,232 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             $"{AppInfo.Name} v{AppInfo.Version}\n\n作者：{AppInfo.Author}\n项目主页：{AppInfo.Url}\n\n" +
             "C# / WPF 版本（.NET 10）。",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
+
+    // ---------- 日志记录设置（M8） ----------
+
+    private void OnOpenLogDirClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(LogDirPath);
+            Process.Start(new ProcessStartInfo("explorer.exe", LogDirPath) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, ex.Message, "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OnToggleAutoRecordClick(object sender, RoutedEventArgs e)
+    {
+        _config.AutoRecord = AutoRecordMenu.IsChecked;
+        foreach (var session in _sessions)
+        {
+            session.AutoRecord = _config.AutoRecord;
+        }
+
+        _configService.Save(_config);
+    }
+
+    private void OnChooseLogDirClick(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new WinForms.FolderBrowserDialog
+        {
+            Description = "选择日志保存目录",
+            SelectedPath = LogDirPath,
+            UseDescriptionForTitle = true,
+        };
+        if (dialog.ShowDialog() != WinForms.DialogResult.OK)
+        {
+            return;
+        }
+
+        _config.LogDir = dialog.SelectedPath;
+        foreach (var session in _sessions)
+        {
+            session.LogDirectory = dialog.SelectedPath;
+        }
+
+        _configService.Save(_config);
+        ActiveSession?.AddSystemText($"日志保存目录已设为: {dialog.SelectedPath}");
+    }
+
+    private void OnSetShardSizeClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new NumberInputDialog("日志分片大小", "每个日志文件最大大小（MB）：", _config.ShardMb, 1, 1024)
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _config.ShardMb = dialog.Value;
+        foreach (var session in _sessions)
+        {
+            session.ShardMb = dialog.Value;
+        }
+
+        _configService.Save(_config);
+        ActiveSession?.AddSystemText($"日志分片大小已设为 {dialog.Value} MB");
+    }
+
+    private void OnSetLogRetentionClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ComboSelectDialog("日志保留策略", "保留时长",
+                                           LogRetention.Options.Select(o => (o.Label, o.Key)).ToArray(),
+                                           _config.LogRetention,
+                                           "到期自动清理旧日志文件（仅 .txt 日志）。「无限制」表示不清理。")
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _config.LogRetention = dialog.SelectedKey;
+        _configService.Save(_config);
+        CleanOldLogs();
+    }
+
+    private void CleanOldLogs() =>
+        OhmyPort.Core.Logging.LogManager.CleanOldLogs(LogDirPath, _config.LogRetention);
+
+    // ---------- 托盘 / 关闭行为（M9） ----------
+
+    private void SetupTray()
+    {
+        _notifyIcon = new WinForms.NotifyIcon
+        {
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(
+                System.IO.Path.Combine(AppContext.BaseDirectory, "OhmyPort.exe")) ??
+                   System.Drawing.SystemIcons.Application,
+            Text = AppInfo.Name,
+            Visible = true,
+            ContextMenuStrip = new WinForms.ContextMenuStrip(),
+        };
+        _notifyIcon.ContextMenuStrip.Items.Add("显示主窗口", null, (_, _) => ShowFromTray());
+        _notifyIcon.ContextMenuStrip.Items.Add("退出", null, (_, _) => QuitFromTray());
+        _notifyIcon.DoubleClick += (_, _) => ShowFromTray();
+    }
+
+    private void ShowFromTray()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void QuitFromTray()
+    {
+        _forceQuit = true;
+        Close();
+    }
+
+    private void OnToggleTrayClick(object sender, RoutedEventArgs e)
+    {
+        _config.CloseBehavior = TrayMenu.IsChecked ? "tray" : "exit";
+        _configService.Save(_config);
+    }
+
+    private void OnToggleCloseConfirmClick(object sender, RoutedEventArgs e)
+    {
+        _config.CloseConfirm = CloseConfirmMenu.IsChecked;
+        _configService.Save(_config);
+    }
+
+    // ---------- 字体（M9） ----------
+
+    private void OnChooseFontClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ComboSelectDialog(
+            "日志字体", "等宽字体",
+            [("系统默认等宽", "default"), ("Consolas", "Consolas"),
+             ("Cascadia Code", "Cascadia Code"), ("JetBrains Mono", "JetBrains Mono")],
+            _config.FontFamily, "字体未安装时会自动回退到系统默认等宽字体。")
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _config.FontFamily = dialog.SelectedKey;
+        ApplyLogFont();
+        _configService.Save(_config);
+    }
+
+    private void ApplyLogFont()
+    {
+        var family = _config.FontFamily;
+        if (family is "" or "default" ||
+            !System.Windows.Media.Fonts.SystemFontFamilies.Any(f =>
+                string.Equals(f.Source, family, StringComparison.OrdinalIgnoreCase)))
+        {
+            family = "Consolas";
+        }
+
+        foreach (var session in _sessions)
+        {
+            session.SetLogFontFamily(family);
+        }
+    }
+
+    // ---------- 背景皮肤（M9） ----------
+
+    private void OnOpenBackgroundClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new BackgroundDialog(
+            _config.BgDir, _config.BgImage, _config.BgBlur, _config.BgEnabled)
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _config.BgDir = dialog.BgDir;
+        _config.BgImage = dialog.BgImage;
+        _config.BgBlur = dialog.BgBlur;
+        _config.BgEnabled = dialog.BgEnabled;
+        ApplyBackground();
+        _configService.Save(_config);
+    }
+
+    private void ApplyBackground()
+    {
+        BgLayer.Source = null;
+        BgLayer.Visibility = Visibility.Collapsed;
+        BgBlurEffect.Radius = 0;
+
+        if (!_config.BgEnabled || string.IsNullOrEmpty(_config.BgImage))
+        {
+            return;
+        }
+
+        var src = System.IO.Path.Combine(_config.BgDir, _config.BgImage);
+        if (!File.Exists(src))
+        {
+            return;
+        }
+
+        try
+        {
+            BgLayer.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(src));
+            // 模糊强度映射：0..50 → 0..30 像素
+            BgBlurEffect.Radius = _config.BgBlur > 0 ? _config.BgBlur * 0.6 : 0;
+            BgLayer.Visibility = Visibility.Visible;
+        }
+        catch
+        {
+            BgLayer.Source = null;
+            BgLayer.Visibility = Visibility.Collapsed;
+        }
+    }
 
     // ---------- 发送辅助：命令页 / 命令 ----------
 
@@ -652,11 +951,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ApplyRememberedState(_sessions[i], _config.Sessions[i]);
         }
 
+        // 全局设置对齐
         WrapMenu.IsChecked = _config.WrapEnabled;
-        foreach (var session in _sessions)
-        {
-            session.WrapEnabled = _config.WrapEnabled;
-        }
+        AutoRecordMenu.IsChecked = _config.AutoRecord;
+        TrayMenu.IsChecked = _config.CloseBehavior == "tray";
+        CloseConfirmMenu.IsChecked = _config.CloseConfirm;
+        ThemeService.Apply(_config.Theme);
+        SyncThemeMenu();
+        ApplyGlobalSettings();
+        ApplyLogFont();
+        ApplyBackground();
 
         _configService.Save(_config);
         ActiveSession?.AddSystemText($"配置已导入: {dialog.FileName}");
@@ -699,9 +1003,57 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SessionCountLabel.Text = $"{_sessions.Count} 个会话";
     }
 
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        // 托盘退出（_forceQuit）直接放行
+        if (_forceQuit)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        var toTray = _config.CloseBehavior == "tray";
+
+        if (_config.CloseConfirm)
+        {
+            var dialog = new CloseConfirmDialog { Owner = this };
+            if (dialog.ShowDialog() == true)
+            {
+                toTray = dialog.ToTray;
+                if (dialog.DoNotAskAgain)
+                {
+                    _config.CloseConfirm = false;
+                    _config.CloseBehavior = toTray ? "tray" : "exit";
+                    TrayMenu.IsChecked = toTray;
+                    CloseConfirmMenu.IsChecked = false;
+                    _configService.Save(_config);
+                }
+            }
+            else
+            {
+                // 用户直接关闭了对话框 → 取消关闭
+                e.Cancel = true;
+                return;
+            }
+        }
+
+        if (toTray)
+        {
+            e.Cancel = true;
+            Hide();
+            _notifyIcon?.ShowBalloonTip(2000, AppInfo.Name, "已最小化到托盘，双击图标恢复",
+                                        WinForms.ToolTipIcon.Info);
+            return;
+        }
+
+        base.OnClosing(e);
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         _cycleTimer.Stop();
+        _autoThemeTimer.Stop();
+        _notifyIcon?.Dispose();
         SaveConfig();
         foreach (var session in _sessions)
         {

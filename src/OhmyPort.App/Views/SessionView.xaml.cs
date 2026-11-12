@@ -40,6 +40,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private readonly Queue<LogRecord> _buffer = new();
     private readonly DispatcherTimer _flushTimer;
     private readonly DispatcherTimer _hotplugTimer;
+    private readonly OhmyPort.Core.Logging.LogManager _logmgr = new();
 
     private HashSet<string> _knownPorts = new(StringComparer.OrdinalIgnoreCase);
     private LogFilter _filter = new();
@@ -50,6 +51,15 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private long _txBytes;
     private string _connectedPort = "";
     private string? _rememberedPort;
+
+    /// <summary>日志保存目录（由主窗口注入并同步）。</summary>
+    public string LogDirectory { get; set; } = AppPaths.DefaultLogDir;
+
+    /// <summary>日志分片大小（MB）。</summary>
+    public int ShardMb { get; set; } = 5;
+
+    /// <summary>连接后是否自动开始记录（由主窗口注入并同步）。</summary>
+    public bool AutoRecord { get; set; } = true;
 
     public SessionView()
     {
@@ -305,6 +315,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         ConnectButton.Click += OnConnectClick;
         PauseButton.Click += OnPauseClick;
         ClearButton.Click += (_, _) => ClearLog();
+        RecordButton.Click += (_, _) => ToggleRecord();
         SendButton.Click += (_, _) => SendRaw();
 
         SendCombo.PreviewKeyDown += (_, e) =>
@@ -457,6 +468,11 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         _monitor.SetDtr(DtrCheck.IsChecked == true);
         _monitor.SetRts(RtsCheck.IsChecked == true);
         AddSystem($"已打开 {port.PortName}，波特率 {baud}");
+        if (AutoRecord && !_logmgr.IsOpen)
+        {
+            StartRecord();
+        }
+
         UpdateConnectionUi();
     }
 
@@ -465,6 +481,11 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private void DisconnectWithMessage(string? message)
     {
         _monitor.Disconnect();
+        if (_logmgr.IsOpen)
+        {
+            StopRecord();
+        }
+
         if (message is not null)
         {
             AddSystem(message);
@@ -512,6 +533,12 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         {
             AppendToBuffer(record);
 
+            // 记录到文件（固定文本形式，不受 HEX 显示 / 过滤影响）
+            if (_logmgr.IsOpen)
+            {
+                _logmgr.Write(FormatRecordLine(record));
+            }
+
             // 帧校验失败：追加系统提示（sys 不受暂停影响，不参与过滤）
             if (!record.ChecksumOk && record.Data is not null)
             {
@@ -548,6 +575,21 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         if (matchedLines.Count > 0)
         {
             MatchedText.AppendLines(matchedLines, follow: true);
+        }
+
+        // 分片 / 错误处理（与 Python 版一致，drain 之后统一处理）
+        if (_logmgr.IsOpen)
+        {
+            _logmgr.Flush(ShardMb, LogDirectory);
+            if (_logmgr.Error is not null)
+            {
+                var err = _logmgr.Error;
+                _logmgr.Close();
+                SyncRecordButton();
+                AddSystem($"记录写入失败：{err}");
+                MessageBox.Show(Window.GetWindow(this)!, $"日志写入失败，已停止记录：\n{err}",
+                                "记录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         RaiseStatusChanged();
@@ -685,6 +727,66 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         LogText.ClearAll();
         MatchedText.ClearAll();
         RaiseStatusChanged();
+    }
+
+    // ---------- 记录 ----------
+
+    public void ToggleRecord()
+    {
+        if (_logmgr.IsOpen)
+        {
+            StopRecord();
+        }
+        else
+        {
+            StartRecord();
+        }
+    }
+
+    public void StartRecord()
+    {
+        if (!_logmgr.IsOpen)
+        {
+            var port = (PortCombo.SelectedItem as PortInfo?)?.PortName ?? "";
+            var path = _logmgr.Open(port, LogDirectory);
+            if (path is not null)
+            {
+                AddSystem($"开始记录到: {path}");
+            }
+            else
+            {
+                AddSystem($"记录启动失败：{_logmgr.Error}");
+                MessageBox.Show(Window.GetWindow(this)!, $"无法创建日志文件：\n{_logmgr.Error}",
+                                "记录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        SyncRecordButton();
+    }
+
+    public void StopRecord()
+    {
+        if (_logmgr.IsOpen)
+        {
+            _logmgr.Close();
+        }
+
+        SyncRecordButton();
+        AddSystem("已停止记录");
+    }
+
+    private void SyncRecordButton()
+    {
+        if (_logmgr.IsOpen)
+        {
+            RecordButton.Content = "停止记录";
+            RecordButton.Tag = "danger";
+        }
+        else
+        {
+            RecordButton.Content = "开始记录";
+            RecordButton.Tag = null;
+        }
     }
 
     // ---------- 过滤 ----------
@@ -909,11 +1011,33 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     {
         _flushTimer.Stop();
         _hotplugTimer.Stop();
+        _logmgr.Close();
         _monitor.Disconnect();
     }
 
     /// <summary>供后续里程碑（日志录制 / 过滤）复用：当前显示区控件。</summary>
     public LogView LogControl => LogText;
+
+    /// <summary>按当前主题刷新日志着色颜色（时间戳 / 发送 / 系统 / 高亮）。</summary>
+    public void ApplyThemeColors()
+    {
+        foreach (var log in new[] { LogText, MatchedText })
+        {
+            log.TimestampBrush = ThemeService.GetBrush("Brush.LogTimestamp");
+            log.TxBrush = ThemeService.GetBrush("Brush.LogTx");
+            log.SysBrush = ThemeService.GetBrush("Brush.LogSys");
+            log.HighlightBackground = ThemeService.GetBrush("Brush.HighlightBg");
+            log.HighlightForeground = ThemeService.GetBrush("Brush.HighlightFg");
+        }
+    }
+
+    /// <summary>设置日志等宽字体（主日志区 + 命中分栏）。</summary>
+    public void SetLogFontFamily(string family)
+    {
+        var font = new System.Windows.Media.FontFamily(family);
+        LogText.FontFamily = font;
+        MatchedText.FontFamily = font;
+    }
 }
 
 /// <summary>一条待显示 / 已缓存的日志。</summary>

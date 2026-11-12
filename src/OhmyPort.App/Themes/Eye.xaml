@@ -1,0 +1,51 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- ============ 护眼（浅绿）主题配色 ============ -->
+  <Color x:Key="Color.Window">#C8E6C9</Color>
+  <Color x:Key="Color.Panel">#D7EDD8</Color>
+  <Color x:Key="Color.PanelAlt">#EAF6EC</Color>
+  <Color x:Key="Color.Hover">#BBDCBC</Color>
+  <Color x:Key="Color.Foreground">#1F3B26</Color>
+  <Color x:Key="Color.Muted">#5B6B5E</Color>
+  <Color x:Key="Color.Border">#A5D6A7</Color>
+  <Color x:Key="Color.Accent">#2E7D32</Color>
+  <Color x:Key="Color.AccentHover">#3C8C40</Color>
+  <Color x:Key="Color.AccentPressed">#256428</Color>
+  <Color x:Key="Color.AccentForeground">#FFFFFF</Color>
+  <Color x:Key="Color.Danger">#B3261E</Color>
+  <Color x:Key="Color.DangerHover">#C53A30</Color>
+  <Color x:Key="Color.DangerPressed">#8C1D17</Color>
+  <Color x:Key="Color.DangerForeground">#FFFFFF</Color>
+  <Color x:Key="Color.LogBackground">#EAF6EC</Color>
+  <Color x:Key="Color.LogTx">#0E7490</Color>
+  <Color x:Key="Color.LogSys">#5B6B5E</Color>
+  <Color x:Key="Color.LogTimestamp">#5B6B5E</Color>
+  <Color x:Key="Color.HighlightBg">#FFF59D</Color>
+  <Color x:Key="Color.HighlightFg">#000000</Color>
+  <Color x:Key="Color.Connected">#4CAF50</Color>
+
+  <SolidColorBrush x:Key="Brush.Window" Color="{StaticResource Color.Window}" />
+  <SolidColorBrush x:Key="Brush.Panel" Color="{StaticResource Color.Panel}" />
+  <SolidColorBrush x:Key="Brush.PanelAlt" Color="{StaticResource Color.PanelAlt}" />
+  <SolidColorBrush x:Key="Brush.Hover" Color="{StaticResource Color.Hover}" />
+  <SolidColorBrush x:Key="Brush.Foreground" Color="{StaticResource Color.Foreground}" />
+  <SolidColorBrush x:Key="Brush.Muted" Color="{StaticResource Color.Muted}" />
+  <SolidColorBrush x:Key="Brush.Border" Color="{StaticResource Color.Border}" />
+  <SolidColorBrush x:Key="Brush.Accent" Color="{StaticResource Color.Accent}" />
+  <SolidColorBrush x:Key="Brush.AccentHover" Color="{StaticResource Color.AccentHover}" />
+  <SolidColorBrush x:Key="Brush.AccentPressed" Color="{StaticResource Color.AccentPressed}" />
+  <SolidColorBrush x:Key="Brush.AccentForeground" Color="{StaticResource Color.AccentForeground}" />
+  <SolidColorBrush x:Key="Brush.Danger" Color="{StaticResource Color.Danger}" />
+  <SolidColorBrush x:Key="Brush.DangerHover" Color="{StaticResource Color.DangerHover}" />
+  <SolidColorBrush x:Key="Brush.DangerPressed" Color="{StaticResource Color.DangerPressed}" />
+  <SolidColorBrush x:Key="Brush.DangerForeground" Color="{StaticResource Color.DangerForeground}" />
+  <SolidColorBrush x:Key="Brush.LogBackground" Color="{StaticResource Color.LogBackground}" />
+  <SolidColorBrush x:Key="Brush.LogTx" Color="{StaticResource Color.LogTx}" />
+  <SolidColorBrush x:Key="Brush.LogSys" Color="{StaticResource Color.LogSys}" />
+  <SolidColorBrush x:Key="Brush.LogTimestamp" Color="{StaticResource Color.LogTimestamp}" />
+  <SolidColorBrush x:Key="Brush.HighlightBg" Color="{StaticResource Color.HighlightBg}" />
+  <SolidColorBrush x:Key="Brush.HighlightFg" Color="{StaticResource Color.HighlightFg}" />
+  <SolidColorBrush x:Key="Brush.Connected" Color="{StaticResource Color.Connected}" />
+
+</ResourceDictionary>

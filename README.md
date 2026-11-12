@@ -54,8 +54,8 @@ tests/OhmyPort.Core.Tests/  xUnit（移植自原版 pytest 用例）
 | M5 | 发送辅助：命令页、定时循环、导入导出 | ✅ |
 | M6 | 协议解析面板 + 自动应答 | ⏳（可选） |
 | M7 | 数值绘图窗口 | ⏳（可选） |
-| M8 | 日志录制 / 分片 / 保留策略 | ⏳ |
-| M9 | 四套主题、背景图、字体、托盘 | ⏳ |
+| M8 | 日志录制 / 分片 / 保留策略 | ✅ |
+| M9 | 四套主题、背景图、字体、托盘 | ✅ |
 | M10 | 打包（dotnet publish + Inno Setup） | ✅ |
 
 ## 打包与发布
@@ -78,6 +78,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 - 配置文件名沿用 `serial_tool_config.json`，字段命名与原版一致（snake_case），老配置可直接读取。
 - 流控：`System.IO.Ports` 不支持 DTR/DSR 流控，选该项时按无流控打开。
-- 日志录制按钮已占位，M8 接入。
 - 搜索用 AvalonEdit 内置 SearchPanel（Ctrl+F/F3/Shift+F3），而非原版的独立查找栏，命中计数略有差异。
 - 日志控件为 AvalonEdit（虚拟化渲染）：5 万行上限实测追加 133ms / 再追加触发裁剪 192ms，实时 40 行/批平均 0.04ms，性能达标。
+- 托盘用 WinForms NotifyIcon（WPF 无内置托盘），DPI 警告 WFO0003 已抑制。
+- 背景模糊用 WPF BlurEffect 实时滤镜（不缓存预模糊图），与原版 PIL 预模糊观感略有差异。

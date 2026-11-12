@@ -4,6 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>OhmyPort.App</RootNamespace>
     <AssemblyName>OhmyPort</AssemblyName>
     <ApplicationIcon>Assets\my-icon.ico</ApplicationIcon>
@@ -11,10 +12,17 @@
     <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\OhmyPort.Core\OhmyPort.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 移除 WinForms 的隐式 using，避免与 WPF 类型冲突；需要时用别名 WinForms = System.Windows.Forms -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
   </ItemGroup>
 
   <ItemGroup>
