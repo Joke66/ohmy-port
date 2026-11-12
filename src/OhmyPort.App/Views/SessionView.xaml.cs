@@ -52,6 +52,17 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private long _txBytes;
     private string _connectedPort = "";
     private string? _rememberedPort;
+    private string? _customTitle;
+    private bool _responsePending;
+    private int _histIdx = -1;
+    private string _timestamp = TimestampModes.Full;
+
+    /// <summary>实时速率采样（1s）。</summary>
+    private readonly DispatcherTimer _rateTimer;
+    private long _lastRxBytes;
+    private long _lastTxBytes;
+    private long _rxRate;
+    private long _txRate;
 
     /// <summary>协议字段定义（按帧解析后用于结构化显示）。</summary>
     private List<ProtocolField> _protocolFields = [];
@@ -98,6 +109,14 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         };
         _hotplugTimer.Tick += (_, _) => CheckHotplug();
         _hotplugTimer.Start();
+
+        _rateTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(1),
+        };
+        _rateTimer.Tick += (_, _) => SampleRate();
+        _rateTimer.Start();
+
         _knownPorts = new HashSet<string>(SerialPort.GetPortNames(), StringComparer.OrdinalIgnoreCase);
 
         _monitor.Received += OnReceived;
@@ -113,7 +132,18 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     /// <summary>会话序号（用于默认标题「串口N」）。</summary>
     public int Index { get; set; }
 
-    public string Title => _monitor.IsConnected ? _connectedPort : $"串口{Index + 1}";
+    public string Title => _customTitle ?? (_monitor.IsConnected ? _connectedPort : $"串口{Index + 1}");
+
+    /// <summary>自定义标题（重命名会话用；置 null 回退默认标题）。</summary>
+    public string? CustomTitle
+    {
+        get => _customTitle;
+        set
+        {
+            _customTitle = string.IsNullOrWhiteSpace(value) ? null : value;
+            RaiseTitleChanged();
+        }
+    }
 
     public bool IsConnected => _monitor.IsConnected;
 
@@ -143,9 +173,26 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             var enc = (EncodingCombo.SelectedItem as Option)?.Label ?? "UTF-8";
             var conn = _monitor.IsConnected ? "已连接" : "未连接";
             return $"{port} @ {baud} · {enc} · {conn}    " +
-                   $"RX: {TextUtil.FormatBytes(Interlocked.Read(ref _monitor.RxBytes))}   " +
-                   $"TX: {TextUtil.FormatBytes(_txBytes)}";
+                   $"RX: {TextUtil.FormatBytes(Interlocked.Read(ref _monitor.RxBytes))}" +
+                   $"{FormatRate(_rxRate)}   " +
+                   $"TX: {TextUtil.FormatBytes(_txBytes)}" +
+                   $"{FormatRate(_txRate)}";
         }
+    }
+
+    /// <summary>速率后缀（如 " · 1.2 KB/s"，速率为 0 时为空）。</summary>
+    private static string FormatRate(long bytesPerSecond) =>
+        bytesPerSecond > 0 ? $" · {TextUtil.FormatBytes(bytesPerSecond)}/s" : "";
+
+    /// <summary>每秒采样一次 RX/TX 增量，得到实时速率。</summary>
+    private void SampleRate()
+    {
+        var rx = Interlocked.Read(ref _monitor.RxBytes);
+        _rxRate = rx - _lastRxBytes;
+        _lastRxBytes = rx;
+        _txRate = _txBytes - _lastTxBytes;
+        _lastTxBytes = _txBytes;
+        RaiseStatusChanged();
     }
 
     /// <summary>串口参数面板是否可见（视图菜单控制）。</summary>
@@ -255,6 +302,19 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
     public bool FilterEnabledState => _filterEnabled;
 
+    public bool FilterRegexState => RegexCheck.IsChecked == true;
+
+    /// <summary>日志时间戳显示档位（配置持久化 / 恢复用）。</summary>
+    public string TimestampMode
+    {
+        get => _timestamp;
+        set
+        {
+            _timestamp = TimestampModes.All.Contains(value) ? value : TimestampModes.Full;
+            ReRender();
+        }
+    }
+
     /// <summary>发送校验类型键（配置持久化用）。</summary>
     public string SendChecksumKey => ChecksumCombo.SelectedValue as string ?? ChecksumKeys.None;
 
@@ -296,6 +356,29 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             .ToList();
 
         _plotHub.Configure(_plotRules, _plotHub.Capacity);
+    }
+
+    /// <summary>从源会话复制全部配置状态（「复制会话」用，不复制运行状态）。</summary>
+    public void CopyStateFrom(SessionView src)
+    {
+        BaudText = src.BaudText;
+        RememberedPort = src.SelectedPort;
+        CustomTitle = $"{src.Title} 副本";
+        SetFontSize(src.FontSizeValue);
+
+        ApplyRememberedFilter(
+            src.FilterKeywordsText, src.FilterModeKey, src.FilterCaseSensitive,
+            src.FilterEnabledState, src.FilterRegexState);
+
+        ApplyRememberedProtocol(
+            src.SendChecksumKey, src.FrameEnabledState, src.FrameHeaderText, src.FrameTailText,
+            src.FrameLengthSizeValue, src.FrameLengthBaseValue, src.FrameBigEndianValue,
+            src.FrameChecksumKey, src.ProtocolFieldsSnapshot);
+
+        SetPlotRules(src.PlotRulesSnapshot);
+        HexView = src.HexView;
+        FixedView = src.FixedView;
+        _timestamp = src.TimestampMode;
     }
 
     /// <summary>从配置恢复协议帧解析与发送校验状态。</summary>
@@ -349,7 +432,8 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     }
 
     /// <summary>从配置恢复过滤状态。</summary>
-    public void ApplyRememberedFilter(string keywords, string mode, bool caseSensitive, bool enabled)
+    public void ApplyRememberedFilter(string keywords, string mode, bool caseSensitive, bool enabled,
+                                      bool regex = false)
     {
         KeywordEdit.Text = keywords;
         if (ModeCombo.Items.Cast<Option>().Any(o => (string)o.Value == mode))
@@ -358,6 +442,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         }
 
         CaseCheck.IsChecked = caseSensitive;
+        RegexCheck.IsChecked = regex;
 
         if (enabled)
         {
@@ -491,7 +576,23 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
                 SendRaw();
                 e.Handled = true;
             }
+            else if (!SendCombo.IsDropDownOpen && e.Key == Key.Up)
+            {
+                RecallHistory(-1);
+                e.Handled = true;
+            }
+            else if (!SendCombo.IsDropDownOpen && e.Key == Key.Down)
+            {
+                RecallHistory(+1);
+                e.Handled = true;
+            }
         };
+
+        // 发送历史右键菜单：清空
+        var clearHistory = new MenuItem { Header = "清空发送历史" };
+        clearHistory.Click += (_, _) => ClearSendHistory();
+        SendCombo.ContextMenu = new ContextMenu();
+        SendCombo.ContextMenu.Items.Add(clearHistory);
 
         EncodingCombo.SelectionChanged += (_, _) =>
         {
@@ -515,6 +616,13 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             }
         };
         CaseCheck.Click += (_, _) =>
+        {
+            if (_filterEnabled)
+            {
+                ApplyFilter();
+            }
+        };
+        RegexCheck.Click += (_, _) =>
         {
             if (_filterEnabled)
             {
@@ -650,6 +758,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         }
 
         UpdateConnectionUi();
+        SendCombo.Focus();
     }
 
     private void Disconnect() => DisconnectWithMessage("串口已关闭");
@@ -737,6 +846,14 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
                 _plotHub.Feed(text);
             }
 
+            // 应答高亮：发送后收到的第一条 RX 用应答标记
+            var isResponse = false;
+            if (record.Direction == LogDirection.Rx && _responsePending)
+            {
+                _responsePending = false;
+                isResponse = true;
+            }
+
             var visible = _filter.Visible(text);
             var isMatch = _filter.Mode == FilterModes.Split && _filter.Matched(text).Count > 0;
 
@@ -748,7 +865,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
             if (visible)
             {
-                lines.Add(FormatLine(record));
+                lines.Add(FormatLine(record, isResponse));
             }
 
             if (isMatch)
@@ -801,26 +918,53 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
     private bool FollowTail => FixedCheck.IsChecked != true;
 
-    private string FormatLine(LogRecord record)
+    private string FormatLine(LogRecord record, bool response = false)
     {
-        var ts = record.Time.ToString("HH:mm:ss.fff");
-        return record.Direction switch
-        {
-            LogDirection.Tx => $"[{ts}] {LogView.TxMark}{DisplayBody(record.Data)}",
-            LogDirection.Sys => $"[{ts}] {LogView.SysMark}{record.Text}",
-            _ => $"[{ts}] {DisplayBody(record.Data)}",
-        };
-    }
+        var ts = TimestampModes.Format(record.Time, _timestamp);
+        var tsPrefix = ts.Length > 0 ? $"[{ts}] " : "";
 
-    private string DisplayBody(byte[]? data)
-    {
-        if (data is null)
+        if (record.Direction == LogDirection.Sys)
         {
-            return "";
+            return $"{tsPrefix}{LogView.SysMark}{record.Text}";
         }
 
-        return _hexView ? ToHex(data) : _encoding.GetString(data);
+        var mark = record.Direction == LogDirection.Tx
+            ? LogView.TxMark
+            : response ? LogView.ResponseMark : "";
+        var prefix = $"{tsPrefix}{mark}";
+
+        if (_hexView && record.Data is not null)
+        {
+            return FormatHexDisplay(record.Data, prefix);
+        }
+
+        return $"{prefix}{DisplayBody(record.Data)}";
     }
+
+    /// <summary>HEX 显示：每 16 字节一行，右侧 ASCII 对照；首行带前缀，续行对齐。</summary>
+    private static string FormatHexDisplay(byte[] data, string prefix)
+    {
+        var rows = HexText.Rows(data);
+        var sb = new StringBuilder();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (sb.Length > 0)
+            {
+                sb.Append('\n');
+            }
+
+            var rowPrefix = i == 0 ? prefix : new string(' ', prefix.Length);
+            sb.Append(rowPrefix)
+              .Append(rows[i].Hex.PadRight(HexText.RowBytes * 3 - 1))
+              .Append("  ")
+              .Append(rows[i].Ascii);
+        }
+
+        return sb.ToString();
+    }
+
+    private string DisplayBody(byte[]? data) =>
+        data is null ? "" : _encoding.GetString(data);
 
     private static string ToHex(byte[] data)
     {
@@ -872,7 +1016,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
         var visibleLines = _buffer
             .Where(r => _filter.Visible(PayloadText(r)))
-            .Select(FormatLine)
+            .Select(r => FormatLine(r))
             .ToList();
         LogText.AppendLines(visibleLines, FollowTail);
 
@@ -890,7 +1034,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
         var matchedLines = _buffer
             .Where(r => _filter.Matched(PayloadText(r)).Count > 0)
-            .Select(FormatLine)
+            .Select(r => FormatLine(r))
             .ToList();
         if (matchedLines.Count > 0)
         {
@@ -1019,7 +1163,8 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         _filter = new LogFilter(
             LogFilter.ParseKeywords(KeywordEdit.Text),
             ModeCombo.SelectedValue as string ?? FilterModes.Highlight,
-            CaseCheck.IsChecked == true);
+            CaseCheck.IsChecked == true,
+            RegexCheck.IsChecked == true);
 
         LogText.SetKeywords(_filter.Keywords, _filter.CaseSensitive);
         MatchedText.SetKeywords(_filter.Keywords, _filter.CaseSensitive);
@@ -1033,6 +1178,14 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private void ClearMatched() => MatchedText.ClearAll();
 
     // ---------- 协议帧解析 ----------
+
+    /// <summary>折叠 / 展开协议面板的详情字段（只留「按帧解析」与折叠按钮）。</summary>
+    private void OnToggleProtocolDetailClick(object sender, RoutedEventArgs e)
+    {
+        var collapsed = ProtocolDetailPanel.Visibility == Visibility.Visible;
+        ProtocolDetailPanel.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        ProtocolFoldButton.Content = collapsed ? "详情 ▾" : "收起 ▴";
+    }
 
     private void ApplyProtocol()
     {
@@ -1213,6 +1366,9 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
     // ---------- 发送 ----------
 
+    /// <summary>发送当前输入框内容（全局快捷键 Ctrl+Enter 用）。</summary>
+    public void SendCurrentInput() => SendRaw();
+
     private void SendRaw()
     {
         var text = SendCombo.Text;
@@ -1259,6 +1415,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         {
             _txBytes += data.Length;
             _pending.Enqueue(new LogRecord(DateTime.Now, LogDirection.Tx, data, null));
+            _responsePending = true;
             RaiseStatusChanged();
             return true;
         }
@@ -1313,6 +1470,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         {
             _txBytes += data.Length;
             _pending.Enqueue(new LogRecord(DateTime.Now, LogDirection.Tx, data, null));
+            _responsePending = true;
             RaiseStatusChanged();
             return true;
         }
@@ -1331,6 +1489,55 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         {
             SendCombo.Items.RemoveAt(0);
         }
+
+        _histIdx = -1;
+    }
+
+    /// <summary>上下键回填发送历史：-1 更早（上），+1 更新（下）。</summary>
+    private void RecallHistory(int direction)
+    {
+        var count = SendCombo.Items.Count;
+        if (count == 0)
+        {
+            return;
+        }
+
+        int next;
+        if (_histIdx == -1)
+        {
+            // 从编辑态进入浏览：上键从最新一条开始，下键无操作
+            next = direction < 0 ? count - 1 : -1;
+            if (next < 0)
+            {
+                return;
+            }
+        }
+        else
+        {
+            next = _histIdx + direction;
+        }
+
+        if (next < 0)
+        {
+            return;
+        }
+
+        if (next >= count)
+        {
+            _histIdx = -1;
+            SendCombo.Text = "";
+            return;
+        }
+
+        _histIdx = next;
+        SendCombo.Text = SendCombo.Items[_histIdx].ToString() ?? "";
+    }
+
+    private void ClearSendHistory()
+    {
+        SendCombo.Items.Clear();
+        _histIdx = -1;
+        AddSystem("发送历史已清空");
     }
 
     private void AddSystem(string text) =>
@@ -1356,6 +1563,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     {
         _flushTimer.Stop();
         _hotplugTimer.Stop();
+        _rateTimer.Stop();
         _logmgr.Close();
         _monitor.Disconnect();
     }
@@ -1372,6 +1580,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             log.TimestampBrush = ThemeService.GetBrush("Brush.LogTimestamp");
             log.TxBrush = ThemeService.GetBrush("Brush.LogTx");
             log.SysBrush = ThemeService.GetBrush("Brush.LogSys");
+            log.ResponseBrush = ThemeService.GetBrush("Brush.Response");
             log.HighlightBackground = ThemeService.GetBrush("Brush.HighlightBg");
             log.HighlightForeground = ThemeService.GetBrush("Brush.HighlightFg");
         }

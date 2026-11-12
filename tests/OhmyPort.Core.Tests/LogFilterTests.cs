@@ -51,4 +51,40 @@ public class LogFilterTests
     {
         Assert.True(new LogFilter([], FilterModes.Include).Visible("anything"));
     }
+
+    [Fact]
+    public void RegexMode_MatchesByPattern()
+    {
+        var f = new LogFilter([@"\d{3,}"], FilterModes.Highlight, useRegex: true);
+        Assert.Equal([@"\d{3,}"], f.Matched("err code=123"));
+        Assert.Empty(f.Matched("err code=12"));
+    }
+
+    [Fact]
+    public void RegexMode_RespectsCaseSensitivity()
+    {
+        var ci = new LogFilter(["error"], caseSensitive: false, useRegex: true);
+        var cs = new LogFilter(["error"], caseSensitive: true, useRegex: true);
+        Assert.Single(ci.Matched("ERROR: x"));
+        Assert.Empty(cs.Matched("ERROR: x"));
+    }
+
+    [Fact]
+    public void RegexMode_InvalidPatternIsIgnored()
+    {
+        var f = new LogFilter(["("], useRegex: true);
+        Assert.Empty(f.Matched("anything"));
+        Assert.True(f.Visible("anything"));
+    }
+
+    [Fact]
+    public void RegexMode_VisibleAppliesIncludeExclude()
+    {
+        var include = new LogFilter(["^ERR"], FilterModes.Include, useRegex: true);
+        var exclude = new LogFilter(["^ERR"], FilterModes.Exclude, useRegex: true);
+        Assert.True(include.Visible("ERR: bad"));
+        Assert.False(include.Visible("ok"));
+        Assert.False(exclude.Visible("ERR: bad"));
+        Assert.True(exclude.Visible("ok"));
+    }
 }

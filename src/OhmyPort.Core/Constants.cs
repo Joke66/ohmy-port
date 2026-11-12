@@ -91,3 +91,26 @@ public static class Themes
 
     public static readonly string[] All = [Auto, Black, Eye, Day];
 }
+
+/// <summary>日志时间戳显示档位。</summary>
+public static class TimestampModes
+{
+    /// <summary>完整：HH:mm:ss.fff</summary>
+    public const string Full = "full";
+
+    /// <summary>仅秒：HH:mm:ss</summary>
+    public const string Seconds = "sec";
+
+    /// <summary>不显示时间戳</summary>
+    public const string Off = "off";
+
+    public static readonly string[] All = [Full, Seconds, Off];
+
+    /// <summary>按档位格式化时间。</summary>
+    public static string Format(DateTime time, string mode) => mode switch
+    {
+        Seconds => time.ToString("HH:mm:ss"),
+        Off => "",
+        _ => time.ToString("HH:mm:ss.fff"),
+    };
+}

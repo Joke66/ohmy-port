@@ -19,6 +19,7 @@
   <Color x:Key="Color.DangerForeground">#FFFFFF</Color>
   <Color x:Key="Color.LogBackground">#FFFFFF</Color>
   <Color x:Key="Color.LogTx">#0E7490</Color>
+  <Color x:Key="Color.Response">#2E7D32</Color>
   <Color x:Key="Color.LogSys">#6B7280</Color>
   <Color x:Key="Color.LogTimestamp">#6B7280</Color>
   <Color x:Key="Color.HighlightBg">#FFF59D</Color>
@@ -48,6 +49,7 @@
   <!-- 菜单栏单独一个键：开背景皮肤时换成高透明度版本（下拉层仍用不透明的 Brush.Panel） -->
   <SolidColorBrush x:Key="Brush.MenuBar" Color="{StaticResource Color.Panel}" />
   <SolidColorBrush x:Key="Brush.LogTx" Color="{StaticResource Color.LogTx}" />
+  <SolidColorBrush x:Key="Brush.Response" Color="{StaticResource Color.Response}" />
   <SolidColorBrush x:Key="Brush.LogSys" Color="{StaticResource Color.LogSys}" />
   <SolidColorBrush x:Key="Brush.LogTimestamp" Color="{StaticResource Color.LogTimestamp}" />
   <SolidColorBrush x:Key="Brush.HighlightBg" Color="{StaticResource Color.HighlightBg}" />

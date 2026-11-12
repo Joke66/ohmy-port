@@ -19,7 +19,14 @@ public sealed class SessionConfig
     public string FilterMode { get; set; } = FilterModes.Highlight;
     public bool FilterCase { get; set; }
     public bool FilterEnabled { get; set; }
+    public bool FilterRegex { get; set; }
     public int FontSize { get; set; } = 11;
+
+    /// <summary>自定义会话标题（null 用默认「串口N」）。</summary>
+    public string? CustomTitle { get; set; }
+
+    /// <summary>日志时间戳显示档位（full/sec/off）。</summary>
+    public string Timestamp { get; set; } = TimestampModes.Full;
 
     /// <summary>发送自动追加的校验类型（none/sum8/xor8/crc16_modbus）。</summary>
     public string SendChecksum { get; set; } = ChecksumKeys.None;
@@ -71,6 +78,15 @@ public sealed class AppConfig
 
     public bool BgEnabled { get; set; }
 
+    /// <summary>窗口位置 / 大小（退出时记忆，启动时恢复；null 表示用默认居中）。</summary>
+    public double? WindowLeft { get; set; }
+    public double? WindowTop { get; set; }
+    public double? WindowWidth { get; set; }
+    public double? WindowHeight { get; set; }
+
+    /// <summary>自定义强调色（#RRGGBB）；空表示用主题默认色。</summary>
+    public string AccentColor { get; set; } = "";
+
     public List<SessionConfig> Sessions { get; set; } = [];
 
     public static readonly JsonSerializerOptions JsonOptions = new()
@@ -117,6 +133,12 @@ public sealed class AppConfig
         BgBlur = Math.Clamp(BgBlur, 0, 50);
         BgVeil = Math.Clamp(BgVeil, 0, 100);
 
+        AccentColor ??= "";
+        if (AccentColor.Length > 0 && !IsHexColor(AccentColor))
+        {
+            AccentColor = "";
+        }
+
         if (string.IsNullOrEmpty(FontFamily))
         {
             FontFamily = "Consolas";
@@ -135,6 +157,11 @@ public sealed class AppConfig
             if (s.FontSize <= 0)
             {
                 s.FontSize = 11;
+            }
+
+            if (!TimestampModes.All.Contains(s.Timestamp))
+            {
+                s.Timestamp = TimestampModes.Full;
             }
 
             if (!ChecksumKeys.All.Contains(s.SendChecksum))
@@ -194,11 +221,24 @@ public sealed class AppConfig
             s.CustomBauds ??= [];
             s.Port = string.IsNullOrEmpty(s.Port) ? null : s.Port;
             s.Baud = string.IsNullOrEmpty(s.Baud) ? null : s.Baud;
+            s.CustomTitle = string.IsNullOrWhiteSpace(s.CustomTitle) ? null : s.CustomTitle;
         }
     }
 
     private static readonly string[] AllFilterModes =
         [FilterModes.Highlight, FilterModes.Include, FilterModes.Exclude, FilterModes.Split];
+
+    /// <summary>校验 #RRGGBB 或 RRGGBB 形式的十六进制颜色。</summary>
+    private static bool IsHexColor(string text)
+    {
+        var t = text.TrimStart('#');
+        if (t.Length != 6)
+        {
+            return false;
+        }
+
+        return t.All(c => Uri.IsHexDigit(c));
+    }
 }
 
 /// <summary>兼容旧配置里 baud 既可能是字符串也可能是数字的写法。</summary>

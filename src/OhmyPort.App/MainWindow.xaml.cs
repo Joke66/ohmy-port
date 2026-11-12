@@ -53,6 +53,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         // 主题
         ThemeService.Apply(_config.Theme);
+        ThemeService.SetAccent(_config.AccentColor);
+        RestoreWindowPlacement();
         SyncThemeMenu();
         ThemeService.ThemeChanged += OnThemeChanged;
         _autoThemeTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -164,11 +166,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             session.SetFontSize(remembered.FontSize);
         }
 
+        if (!string.IsNullOrEmpty(remembered.CustomTitle))
+        {
+            session.CustomTitle = remembered.CustomTitle;
+        }
+
+        session.TimestampMode = remembered.Timestamp;
+
         session.ApplyRememberedFilter(
             remembered.FilterKeywords,
             remembered.FilterMode,
             remembered.FilterCase,
-            remembered.FilterEnabled);
+            remembered.FilterEnabled,
+            remembered.FilterRegex);
 
         session.ApplyRememberedProtocol(
             remembered.SendChecksum,
@@ -270,6 +280,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ActiveSession?.SaveLog();
                 e.Handled = true;
                 break;
+            case Key.Enter:
+                ActiveSession?.SendCurrentInput();
+                e.Handled = true;
+                break;
             case Key.OemPlus:          // Ctrl+= / Ctrl++（= 与 + 共用一键）
                 ActiveSession?.ZoomIn();
                 e.Handled = true;
@@ -299,10 +313,58 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void OnCloseTabClick(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: SessionView session })
+        if (sender is FrameworkElement element &&
+            (element.DataContext as SessionView ?? element.Tag as SessionView) is { } session)
         {
             CloseSession(session);
         }
+    }
+
+    /// <summary>标签右键 / 双击重命名会话。</summary>
+    private void OnRenameSessionClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: SessionView session })
+        {
+            RenameSession(session);
+        }
+    }
+
+    private void OnTabHeaderMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2 && sender is FrameworkElement { DataContext: SessionView session })
+        {
+            RenameSession(session);
+            e.Handled = true;
+        }
+    }
+
+    private void RenameSession(SessionView session)
+    {
+        var dialog = new CommandEditDialog(_config.Pages, _ => 0, "重命名会话",
+                                           name: session.Title, pageOnly: true)
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() == true && dialog.CommandName.Length > 0)
+        {
+            session.CustomTitle = dialog.CommandName;
+        }
+    }
+
+    /// <summary>复制会话：新建一个会话并复制源会话的配置。</summary>
+    private void OnDuplicateSessionClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: SessionView source })
+        {
+            DuplicateSession(source);
+        }
+    }
+
+    private void DuplicateSession(SessionView source)
+    {
+        AddSession();
+        _sessions[^1].CopyStateFrom(source);
+        RefreshStatusBar();
     }
 
     private void OnToggleParamsClick(object sender, RoutedEventArgs e)
@@ -389,6 +451,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SyncMenuState();
     }
 
+    /// <summary>时间戳显示档位（当前会话）。</summary>
+    private void OnTimestampClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string mode } && ActiveSession is { } session)
+        {
+            session.TimestampMode = mode;
+            SyncTimestampMenu();
+        }
+    }
+
+    private void SyncTimestampMenu()
+    {
+        var mode = ActiveSession?.TimestampMode ?? TimestampModes.Full;
+        TsFullMenu.IsChecked = mode == TimestampModes.Full;
+        TsSecMenu.IsChecked = mode == TimestampModes.Seconds;
+        TsOffMenu.IsChecked = mode == TimestampModes.Off;
+    }
+
     private void OnZoomInClick(object sender, RoutedEventArgs e) => ActiveSession?.ZoomIn();
 
     private void OnZoomOutClick(object sender, RoutedEventArgs e) => ActiveSession?.ZoomOut();
@@ -459,6 +539,76 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             $"{AppInfo.Name} v{AppInfo.Version}\n\n作者：{AppInfo.Author}\n项目主页：{AppInfo.Url}\n\n" +
             "C# / WPF 版本（.NET 10）。",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
+
+    /// <summary>选择自定义强调色（覆盖主题默认的 Brush.Accent 系列）。</summary>
+    private void OnChooseAccentClick(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new WinForms.ColorDialog
+        {
+            AllowFullOpen = true,
+            AnyColor = true,
+            FullOpen = true,
+        };
+
+        try
+        {
+            if (_config.AccentColor.Length > 0)
+            {
+                dialog.Color = System.Drawing.ColorTranslator.FromHtml(_config.AccentColor);
+            }
+        }
+        catch
+        {
+            // 配置里的颜色非法，用默认色
+        }
+
+        if (dialog.ShowDialog() != WinForms.DialogResult.OK)
+        {
+            return;
+        }
+
+        _config.AccentColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        ThemeService.SetAccent(_config.AccentColor);
+        _configService.Save(_config);
+    }
+
+    /// <summary>恢复上次的窗口位置 / 大小（越界时回退默认居中）。</summary>
+    private void RestoreWindowPlacement()
+    {
+        if (_config.WindowWidth is { } w && _config.WindowHeight is { } h)
+        {
+            Width = Math.Clamp(w, MinWidth, Math.Max(MinWidth, SystemParameters.VirtualScreenWidth));
+            Height = Math.Clamp(h, MinHeight, Math.Max(MinHeight, SystemParameters.VirtualScreenHeight));
+        }
+
+        if (_config.WindowLeft is { } left && _config.WindowTop is { } top)
+        {
+            var vsl = SystemParameters.VirtualScreenLeft;
+            var vst = SystemParameters.VirtualScreenTop;
+            var vsw = SystemParameters.VirtualScreenWidth;
+            var vsh = SystemParameters.VirtualScreenHeight;
+            // 标题栏至少要在虚拟屏幕内可见，避免拔掉外接显示器后窗口跑到屏外
+            if (left >= vsl - 200 && left < vsl + vsw - 40 &&
+                top >= vst - 200 && top < vst + vsh - 40)
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual;
+                Left = left;
+                Top = top;
+            }
+        }
+    }
+
+    /// <summary>退出时记录当前窗口位置 / 大小（仅正常状态）。</summary>
+    private void SaveWindowPlacement()
+    {
+        if (WindowState == WindowState.Normal)
+        {
+            _config.WindowLeft = Left;
+            _config.WindowTop = Top;
+            _config.WindowWidth = Width;
+            _config.WindowHeight = Height;
+        }
+    }
 
     private void OnOpenChecksumCalculatorClick(object sender, RoutedEventArgs e)
     {
@@ -1142,6 +1292,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         TrayMenu.IsChecked = _config.CloseBehavior == "tray";
         CloseConfirmMenu.IsChecked = _config.CloseConfirm;
         ThemeService.Apply(_config.Theme);
+        ThemeService.SetAccent(_config.AccentColor);
         SyncThemeMenu();
         ApplyGlobalSettings();
         ApplyLogFont();
@@ -1157,6 +1308,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         WrapMenu.IsChecked = _config.WrapEnabled;
         SendAssistMenu.IsChecked = SendAssistPanel.Visibility == Visibility.Visible;
+        SyncTimestampMenu();
 
         if (ActiveSession is not { } session)
         {
@@ -1205,7 +1357,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         StatusLabel.Text = session.StatusText;
-        SessionCountLabel.Text = $"{_sessions.Count} 个会话";
+        SessionCountLabel.Text = $"{session.Title} · {_sessions.Count} 个会话";
     }
 
     protected override void OnClosing(CancelEventArgs e)
@@ -1260,6 +1412,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _autoThemeTimer.Stop();
         _plotWindow?.Close();
         _notifyIcon?.Dispose();
+        SaveWindowPlacement();
         SaveConfig();
         foreach (var session in _sessions)
         {
@@ -1283,6 +1436,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 FilterMode = s.FilterModeKey,
                 FilterCase = s.FilterCaseSensitive,
                 FilterEnabled = s.FilterEnabledState,
+                FilterRegex = s.FilterRegexState,
+                CustomTitle = s.CustomTitle,
+                Timestamp = s.TimestampMode,
                 SendChecksum = s.SendChecksumKey,
                 FrameEnabled = s.FrameEnabledState,
                 FrameHeader = s.FrameHeaderText,

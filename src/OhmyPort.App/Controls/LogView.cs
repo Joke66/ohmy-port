@@ -22,6 +22,9 @@ public sealed class LogView : TextEditor
     /// <summary>系统消息标记。</summary>
     public const string SysMark = "◆ ";
 
+    /// <summary>应答（发送后收到的第一条）标记。</summary>
+    public const string ResponseMark = "RECV <<<<<<<<<<";
+
     private readonly LogColorizer _colorizer = new();
 
     public LogView()
@@ -96,6 +99,12 @@ public sealed class LogView : TextEditor
     {
         get => _colorizer.SysBrush;
         set => _colorizer.SysBrush = value;
+    }
+
+    public Brush ResponseBrush
+    {
+        get => _colorizer.ResponseBrush;
+        set => _colorizer.ResponseBrush = value;
     }
 
     public Brush HighlightBackground
@@ -203,6 +212,7 @@ internal sealed class LogColorizer : DocumentColorizingTransformer
     public Brush TimestampBrush { get; set; } = Brushes.Gray;
     public Brush TxBrush { get; set; } = Brushes.DeepSkyBlue;
     public Brush SysBrush { get; set; } = Brushes.Gray;
+    public Brush ResponseBrush { get; set; } = Brushes.LimeGreen;
     public Brush HighlightBackground { get; set; } = Brushes.DarkGoldenrod;
     public Brush HighlightForeground { get; set; } = Brushes.White;
     public IReadOnlyList<string> Keywords { get; set; } = [];
@@ -257,6 +267,11 @@ internal sealed class LogColorizer : DocumentColorizingTransformer
         if (text.AsSpan(bodyIndex).StartsWith(LogView.SysMark, StringComparison.Ordinal))
         {
             return SysBrush;
+        }
+
+        if (text.AsSpan(bodyIndex).StartsWith(LogView.ResponseMark, StringComparison.Ordinal))
+        {
+            return ResponseBrush;
         }
 
         return null;

@@ -52,31 +52,37 @@
                KeyDown="OnKeywordKeyDown" />
       <ComboBox x:Name="ModeCombo" Width="150" Margin="6,0,0,0" />
       <CheckBox x:Name="CaseCheck" Margin="10,0,0,0" VerticalAlignment="Center" Content="区分大小写" />
+      <CheckBox x:Name="RegexCheck" Margin="8,0,0,0" VerticalAlignment="Center" Content="正则"
+                ToolTip="把关键词当作正则表达式匹配" />
       <TextBlock Margin="14,0,6,0" VerticalAlignment="Center" Text="编码" />
       <ComboBox x:Name="EncodingCombo" Width="90" />
       <CheckBox x:Name="HexViewCheck" Margin="12,0,0,0" VerticalAlignment="Center" Content="HEX显示" />
       <Button x:Name="FilterButton" Margin="12,0,0,0" Content="应用" ToolTip="启用 / 关闭关键词过滤" />
     </StackPanel>
 
-    <!-- 协议帧解析（默认隐藏，视图菜单里打开） -->
+    <!-- 协议帧解析（默认隐藏，视图菜单里打开；详情可折叠） -->
     <StackPanel x:Name="ProtocolPanel" Grid.Row="3" Margin="0,0,0,4" Orientation="Horizontal"
                 Visibility="Collapsed">
       <CheckBox x:Name="FrameEnableCheck" Margin="0,0,10,0" VerticalAlignment="Center"
                 Content="按帧解析" ToolTip="开启后接收按协议帧切分（帧头/长度/校验）" />
-      <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="帧头" />
-      <TextBox x:Name="FrameHeaderEdit" Width="78" ToolTip="帧头 HEX，如 AA 55；留空则不匹配帧头" />
-      <TextBlock Margin="10,0,4,0" VerticalAlignment="Center" Text="帧尾" />
-      <TextBox x:Name="FrameTailEdit" Width="78" ToolTip="帧尾 HEX，如 0D 0A；留空则按长度切帧" />
-      <TextBlock Margin="10,0,4,0" VerticalAlignment="Center" Text="长度字段" />
-      <ComboBox x:Name="FrameLengthCombo" Width="60" ToolTip="长度字段字节数（0 表示无长度字段）" />
-      <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="长度基准" />
-      <TextBox x:Name="FrameLengthBaseEdit" Width="46" ToolTip="长度字段值再加上的偏移（可为负）" />
-      <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="字节序" />
-      <ComboBox x:Name="FrameEndianCombo" Width="66" ToolTip="长度字段的字节序" />
-      <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="校验" />
-      <ComboBox x:Name="FrameChecksumCombo" Width="108" ToolTip="校验算法（覆盖帧头+长度+数据）" />
-      <Button x:Name="EditFieldsButton" Margin="10,0,0,0" Content="字段..."
-              ToolTip="编辑协议字段（名称 / 偏移 / 类型 / 系数）" />
+      <ToggleButton x:Name="ProtocolFoldButton" Margin="0,0,8,0" Padding="6,0" FontSize="11"
+                    Content="收起 ▴" ToolTip="折叠 / 展开协议参数" Click="OnToggleProtocolDetailClick" />
+      <StackPanel x:Name="ProtocolDetailPanel" Orientation="Horizontal">
+        <TextBlock Margin="0,0,4,0" VerticalAlignment="Center" Text="帧头" />
+        <TextBox x:Name="FrameHeaderEdit" Width="78" ToolTip="帧头 HEX，如 AA 55；留空则不匹配帧头" />
+        <TextBlock Margin="10,0,4,0" VerticalAlignment="Center" Text="帧尾" />
+        <TextBox x:Name="FrameTailEdit" Width="78" ToolTip="帧尾 HEX，如 0D 0A；留空则按长度切帧" />
+        <TextBlock Margin="10,0,4,0" VerticalAlignment="Center" Text="长度字段" />
+        <ComboBox x:Name="FrameLengthCombo" Width="60" ToolTip="长度字段字节数（0 表示无长度字段）" />
+        <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="长度基准" />
+        <TextBox x:Name="FrameLengthBaseEdit" Width="46" ToolTip="长度字段值再加上的偏移（可为负）" />
+        <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="字节序" />
+        <ComboBox x:Name="FrameEndianCombo" Width="66" ToolTip="长度字段的字节序" />
+        <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Text="校验" />
+        <ComboBox x:Name="FrameChecksumCombo" Width="108" ToolTip="校验算法（覆盖帧头+长度+数据）" />
+        <Button x:Name="EditFieldsButton" Margin="10,0,0,0" Content="字段..."
+                ToolTip="编辑协议字段（名称 / 偏移 / 类型 / 系数）" />
+      </StackPanel>
     </StackPanel>
 
     <!-- 日志区 -->

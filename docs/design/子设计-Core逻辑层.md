@@ -9,6 +9,12 @@
 - `UiDefaults`：性能参数——日志上限 50000 行、刷新 80ms、读块 4096 字节、高亮重算 0.5s、热插拔 2s、绘图窗口 600 点、发送历史 50 条。
 - `LogRetention`：日志保留选项（一周/一月/半年/一年/无限制 → 天数）。
 - `Themes`：主题标识（auto/black/day/eye）。
+- `TimestampModes`：日志时间戳显示档位（full=HH:mm:ss.fff / sec=HH:mm:ss / off=不显示）+ `Format` 格式化。
+
+## 1.1 HEX 显示格式化 — `HexText.cs`
+
+- `RowBytes`：每行字节数（16）。
+- `Rows(data)`：把字节流按行切分，返回每行（hex 文本 `"XX XX ..."`、ascii 文本），不可打印字符显示为 `.`。供界面层做 HEX 分列 + ASCII 对照。
 
 ## 2. 路径与配置 — `AppPaths.cs` / `ConfigService.cs`
 
@@ -41,7 +47,7 @@
 
 - `FilterModes`：highlight（显示全部并高亮）/ include（仅显示命中行）/ exclude（排除命中行）/ split（上下分栏显示命中行）。
 - `ParseKeywords`：把 `,;空白换行` 统一成分隔符后去重解析。
-- `Matched(line)`：返回命中的关键词（保持配置顺序），大小写敏感性可配。
+- `Matched(line)`：返回命中的关键词（保持配置顺序）；`UseRegex=true` 时按正则 `Regex.IsMatch` 匹配，非法正则忽略该关键词。
 - `Visible(line)`：判定该行是否应显示在主导出区。
 - `HighlightEnabled`：该模式是否需要高亮命中关键词。
 

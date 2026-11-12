@@ -15,7 +15,8 @@
 职责：会话管理、菜单/工具栏编排、发送辅助面板、配置导入导出、托盘、背景皮肤、全局设置下发。
 
 - 会话模型：`_sessions: List<SessionView>`，每个会话是一个 `TabItem`（Header 用 DataTemplate 显示连接绿点 + 标题 + 关闭按钮）。
-- 会话操作：`AddSession` / `CloseSession`（至少保留一个，关闭后重新编号刷新「串口N」标题）。
+- 会话操作：`AddSession` / `CloseSession`（至少保留一个，关闭后重新编号刷新「串口N」标题）；标签右键菜单（重命名/复制会话/关闭）、双击标题重命名；`DuplicateSession` 新建会话并 `CopyStateFrom` 复制配置；`CustomTitle` 按会话持久化。
+- 快捷键：`OnPreviewKeyDown` 处理 Ctrl+T（新建）/ Ctrl+S（保存日志）/ Ctrl+Enter（发送）/ Ctrl+=、-、0（字号）。
 - 菜单/工具栏：工具栏 ToggleButton 把状态写回对应菜单项再复用菜单处理逻辑（`OnToolbarToggleClick`），`SyncMenuState`/`SyncToolbarState` 保证两者一致。
 - 全局设置：`ApplyGlobalSettings` 把换行/日志目录/分片/自动记录/主题着色下发到所有会话。
 - 发送辅助：`RebuildCommandTabs` 按 `_config.Pages` 重建命令页；`SendCommand` 调当前会话 `SendCommandContent`；命令页右键菜单支持新增/重命名/删除页。
@@ -23,6 +24,9 @@
 - 配置导入导出：`OnExportConfigClick` 序列化到用户选的文件；`OnImportConfigClick` 反序列化 + `Normalize` 后对齐会话数、全局设置、主题、背景，再保存。
 - 关闭流程：`OnClosing` 按 `CloseBehavior`（tray/exit）+ `CloseConfirm` 决定托盘还是退出；`OnClosed` 停所有定时器、dispose 托盘、`SaveConfig`、逐个 `session.Shutdown()`。
 - 背景皮肤：`ApplyBackground` 加载背景图（4K 按 1920 宽解码）、设 `BlurEffect` 半径（`BgBlur*3` 上限 36）、设遮罩 `BgVeilLayer.Opacity`，并调 `ThemeService.SetSurfaceTranslucency(true)` 让容器半透明。
+- 强调色：`OnChooseAccentClick` 用 WinForms `ColorDialog` 选色 → `ThemeService.SetAccent` → 保存 `accent_color`。
+- 窗口记忆：`RestoreWindowPlacement` 启动时恢复（越界回退居中），`SaveWindowPlacement` 退出时记录 `window_left/top/width/height`。
+- 时间戳：视图菜单「时间戳」子菜单（完整/仅秒/不显示）改当前会话 `TimestampMode`，`SyncTimestampMenu` 随会话切换同步。
 
 ## 3. 会话视图 — `Views/SessionView.xaml` / `.xaml.cs`
 
@@ -30,8 +34,8 @@
 
 1. 端口配置行（端口下拉 + 刷新 + 波特率可编辑下拉）。
 2. 完整串口参数（数据位/停止位/校验位/流控/DTR/RTS，默认隐藏，视图菜单打开）。
-3. 关键词过滤（关键词/模式/区分大小写/编码/HEX 显示/应用，默认隐藏）。
-4. 协议帧解析（帧头/帧尾/长度字段/长度基准/字节序/校验/「字段...」按钮，默认隐藏）。
+3. 关键词过滤（关键词/模式/区分大小写/正则/编码/HEX 显示/应用，默认隐藏）。
+4. 协议帧解析（帧头/帧尾/长度字段/长度基准/字节序/校验/「字段...」按钮，详情可折叠，默认隐藏）。
 5. 日志区（`LogView`）。
 6. 帧字段解析结果（名称/类型/值/原始 HEX 表格，默认隐藏，视图菜单「字段解析」打开）。
 7. 命中结果分栏（split 模式显示）。
@@ -40,15 +44,18 @@
 
 关键行为：
 
-- 连接：`OnConnectClick` 校验端口/波特率后 `SerialMonitor.Connect`，成功后设 DTR/RTS、写系统日志、按 `AutoRecord` 自动开始记录。
+- 连接：`OnConnectClick` 校验端口/波特率后 `SerialMonitor.Connect`，成功后设 DTR/RTS、写系统日志、按 `AutoRecord` 自动开始记录，并聚焦发送框。
 - 接收→显示：`OnReceived` 入队 → `Flush()` 出队（80ms）→ 写文件 + 过滤 + 格式化 + 分栏，末尾 `LogManager.Flush` 处理分片/错误。
-- 过滤：`ApplyFilter` 重建 `LogFilter` 并 `ReRender` 全量重绘；`ToggleFilter` 关闭时清高亮并隐藏分栏。
-- 发送：`SendRaw` 读输入 → `SendContent`（HEX/文本 + 换行）→ 选中校验时追加校验字节（换行前）→ 成功后入队 Tx 回显并计 `_txBytes`、写发送历史（上限 50）。
-- 协议帧解析：`ApplyProtocol` 由帧头/帧尾/长度/校验字段构造 `FrameParser` 并 `SetFrameParser`；未启用时置 null 回退按行。帧校验失败在 `Flush` 中追加系统提示。
+- 过滤：`ApplyFilter` 重建 `LogFilter`（含正则开关）并 `ReRender` 全量重绘；`ToggleFilter` 关闭时清高亮并隐藏分栏。
+- 发送：`SendRaw` 读输入 → `SendContent`（HEX/文本 + 换行）→ 选中校验时追加校验字节（换行前）→ 成功后入队 Tx 回显、计 `_txBytes`、写发送历史、置 `_responsePending`。发送历史支持上下键回填、右键清空。
+- 应答高亮：发送后收到的第一条 RX 用 `ResponseMark`（`RECV <<<<<<<<<<`）着色（`_responsePending` 一次性消耗）。
+- HEX 显示：`_hexView` 时 `FormatHexDisplay` 用 `HexText.Rows` 按 16 字节分行 + ASCII 对照，首行带时间戳/方向前缀、续行对齐。
+- 时间戳：`TimestampMode`（full/sec/off）控制 `FormatLine` 的时间戳；落盘 `FormatRecordLine` 始终保留完整时间戳。
+- 协议帧解析：`ApplyProtocol` 由帧头/帧尾/长度/校验字段构造 `FrameParser` 并 `SetFrameParser`；未启用时置 null 回退按行。帧校验失败在 `Flush` 中追加系统提示。详情字段可由 `OnToggleProtocolDetailClick` 折叠。
 - 字段解析：`Flush` 记录最近一帧（`_latestFrame`）并置脏；`MaybeRefreshFields` 限速 150ms、面板不可见时不解码，`RefreshFields` 调 `ProtocolDecoder.Decode` 刷新表格（越界字段标红）。数据区偏移 `_frameDataOffset = 帧头长度 + 长度字段长度`。字段定义由 `ProtocolFieldDialog` 编辑，按会话持久化。
 - 曲线采集：`Flush` 中对接收行调 `_plotHub.Feed(text)`（暂停显示时仍采集）；`ClearLog` 一并清空曲线数据。规则由 `SetPlotRules` 写入（配置恢复 / 曲线窗口编辑）。
 - 记录：`StartRecord`/`StopRecord` 用 `LogManager` 落盘；`ToggleRecord` 切换；`SyncRecordButton` 更新按钮文案。
-- 状态：`StatusText` 拼端口/波特率/编码/连接状态/RX/TX 字节，`StatusChanged` 通知主窗口刷新状态栏。
+- 状态：`StatusText` 拼端口/波特率/编码/连接状态/RX/TX 字节与实时速率（`SampleRate` 每秒采样增量），`StatusChanged` 通知主窗口刷新状态栏。
 - 热插拔：`_hotplugTimer`（2s）检测连接端口被拔出则自动断开，端口集合变化则刷新列表。
 - 生命周期：`Shutdown` 停定时器、关日志、断开串口。
 
@@ -62,8 +69,8 @@
 - `ZoomIn/Out/Reset`：字号缩放（6~72，默认 12），Ctrl+滚轮也缩放。
 - `ApplyTheme`：AvalonEdit 不参与全局样式，背景透明、前景/选区/光标显式绑定资源，避免深色主题白底白字。
 - `SetKeywords` / `RefreshHighlight`：关键词高亮重算。
-- `LogColorizer`（`DocumentColorizingTransformer`）：无状态按行着色——时间戳 `[HH:mm:ss.fff] `、`SEND >>>>>>>>>>` 标记（Tx）、`◆ ` 系统标记、关键词高亮（背景+前景）。
-- 方向标记常量：`TxMark = "SEND >>>>>>>>>>"`、`SysMark = "◆ "`。
+- `LogColorizer`（`DocumentColorizingTransformer`）：无状态按行着色——时间戳 `[HH:mm:ss.fff] `、`SEND >>>>>>>>>>` 标记（Tx）、`◆ ` 系统标记、`RECV <<<<<<<<<<` 应答标记、关键词高亮（背景+前景）。
+- 方向标记常量：`TxMark = "SEND >>>>>>>>>>"`、`SysMark = "◆ "`、`ResponseMark = "RECV <<<<<<<<<<"`。
 
 ## 4.1 实时曲线画布 — `Controls/PlotCanvas.cs`
 
@@ -78,6 +85,7 @@
 - `RefreshIfAuto`：auto 模式下轮询（2s）检测系统深浅变化。
 - `ApplyTitleBarTheme`：通过 DWM `DWMWA_USE_IMMERSIVE_DARK_MODE`（20，回退 19）设置标题栏深浅。
 - `SetSurfaceTranslucency`：背景皮肤开启时把 `Brush.MenuBar`/`Brush.Surface`/`Brush.LogSurface` 换半透明，让背景图透出。
+- `SetAccent(hex)`：自定义强调色覆盖 `Brush.Accent`/`AccentHover`/`AccentPressed`/`AccentForeground`（Hover 变亮、Pressed 变暗、前景按亮度取黑白）；`ApplyDictionary` 每次切换主题后重新应用。
 - `AttachWindow`：给代码 new 的对话框补 `Theme.Window` 样式与背景/前景资源引用。
 - `GetBrush(key)` / `IsDark`：日志着色与标题栏判断用。
 

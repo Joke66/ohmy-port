@@ -58,6 +58,14 @@
                   app:IconGlyph.Name="fixed" Click="OnToggleFixedClick" />
         <MenuItem x:Name="WrapMenu" Header="自动换行" IsCheckable="True" IsChecked="True"
                   app:IconGlyph.Name="wrap" Click="OnToggleWrapClick" />
+        <MenuItem Header="时间戳" app:IconGlyph.Name="clock">
+          <MenuItem x:Name="TsFullMenu" Header="完整（HH:mm:ss.fff）" IsCheckable="True"
+                    Tag="full" Click="OnTimestampClick" />
+          <MenuItem x:Name="TsSecMenu" Header="仅秒（HH:mm:ss）" IsCheckable="True"
+                    Tag="sec" Click="OnTimestampClick" />
+          <MenuItem x:Name="TsOffMenu" Header="不显示" IsCheckable="True"
+                    Tag="off" Click="OnTimestampClick" />
+        </MenuItem>
       </MenuItem>
       <MenuItem Header="设置(_S)">
         <MenuItem Header="主题" app:IconGlyph.Name="palette">
@@ -67,6 +75,7 @@
           <MenuItem x:Name="ThemeEyeMenu" Header="护眼" IsCheckable="True" Click="OnThemeClick" Tag="eye" />
         </MenuItem>
         <MenuItem Header="背景皮肤..." app:IconGlyph.Name="palette" Click="OnOpenBackgroundClick" />
+        <MenuItem Header="强调色..." app:IconGlyph.Name="palette" Click="OnChooseAccentClick" />
         <Separator />
         <MenuItem Header="字体..." app:IconGlyph.Name="font" Click="OnChooseFontClick" />
         <MenuItem Header="字体增大" InputGestureText="Ctrl+=" app:IconGlyph.Name="font" Click="OnZoomInClick" />
@@ -180,12 +189,22 @@
               <Setter Property="HeaderTemplate">
                 <Setter.Value>
                   <DataTemplate>
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel Orientation="Horizontal" Background="Transparent">
+                      <StackPanel.ContextMenu>
+                        <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                          <MenuItem Header="重命名会话..." Click="OnRenameSessionClick" />
+                          <MenuItem Header="复制会话" Click="OnDuplicateSessionClick" />
+                          <Separator />
+                          <MenuItem Header="关闭会话" Click="OnCloseTabClick" />
+                        </ContextMenu>
+                      </StackPanel.ContextMenu>
                       <Ellipse x:Name="ConnDot" Width="8" Height="8" Margin="0,0,6,0"
                                VerticalAlignment="Center" Fill="{DynamicResource Brush.Connected}"
                                Visibility="Collapsed" />
                       <TextBlock x:Name="TitleText" VerticalAlignment="Center" Text="{Binding Title}"
-                                 Foreground="{DynamicResource Brush.Muted}" />
+                                 Foreground="{DynamicResource Brush.Muted}"
+                                 Background="Transparent" ToolTip="双击重命名，右键更多操作"
+                                 MouseLeftButtonDown="OnTabHeaderMouseDown" />
                       <Button Width="16" Height="16" Margin="8,0,0,0" Padding="0"
                               Background="Transparent" BorderThickness="0" FontSize="10"
                               Content="×" Tag="{Binding}" Click="OnCloseTabClick"

@@ -90,12 +90,96 @@ public static class ThemeService
         {
             dicts.Add(new ResourceDictionary { Source = new Uri(source, UriKind.Relative) });
             ApplySurfaceBrushes();
+            ApplyAccentInternal();
             return;
         }
 
         dicts[0] = new ResourceDictionary { Source = new Uri(source, UriKind.Relative) };
         ApplySurfaceBrushes();
+        ApplyAccentInternal();
     }
+
+    /// <summary>用户自定义的强调色（#RRGGBB）；空表示用主题默认。</summary>
+    private static string? _accent;
+
+    private static readonly string[] AccentKeys =
+        ["Brush.Accent", "Brush.AccentHover", "Brush.AccentPressed", "Brush.AccentForeground"];
+
+    /// <summary>设置自定义强调色并立即生效。</summary>
+    public static void SetAccent(string? hex)
+    {
+        _accent = string.IsNullOrWhiteSpace(hex) ? null : hex.Trim();
+        ApplyAccentInternal();
+    }
+
+    /// <summary>把自定义强调色覆盖到全局资源（主题切换后也会被重新应用）。</summary>
+    private static void ApplyAccentInternal()
+    {
+        var resources = Application.Current?.Resources;
+        if (resources is null)
+        {
+            return;
+        }
+
+        foreach (var key in AccentKeys)
+        {
+            resources.Remove(key);
+        }
+
+        if (string.IsNullOrEmpty(_accent))
+        {
+            return;
+        }
+
+        var c = ParseColor(_accent);
+        if (c == default)
+        {
+            return;
+        }
+
+        resources["Brush.Accent"] = Solid(c);
+        resources["Brush.AccentHover"] = Solid(Blend(c, Colors.White, 0.15f));
+        resources["Brush.AccentPressed"] = Solid(Blend(c, Colors.Black, 0.15f));
+        resources["Brush.AccentForeground"] =
+            Solid(IsDarkColor(c) ? Colors.White : Color.FromRgb(0x11, 0x11, 0x11));
+    }
+
+    private static SolidColorBrush Solid(Color c)
+    {
+        var b = new SolidColorBrush(c);
+        b.Freeze();
+        return b;
+    }
+
+    private static Color ParseColor(string hex)
+    {
+        var t = hex.TrimStart('#');
+        if (t.Length != 6)
+        {
+            return default;
+        }
+
+        try
+        {
+            return Color.FromRgb(
+                Convert.ToByte(t[..2], 16),
+                Convert.ToByte(t[2..4], 16),
+                Convert.ToByte(t[4..6], 16));
+        }
+        catch (Exception ex) when (ex is FormatException or OverflowException)
+        {
+            return default;
+        }
+    }
+
+    private static Color Blend(Color c, Color target, float amount) =>
+        Color.FromRgb(
+            (byte)(c.R + (target.R - c.R) * amount),
+            (byte)(c.G + (target.G - c.G) * amount),
+            (byte)(c.B + (target.B - c.B) * amount));
+
+    private static bool IsDarkColor(Color c) =>
+        (c.R * 0.299 + c.G * 0.587 + c.B * 0.114) < 150;
 
     /// <summary>背景皮肤是否开启（大面积容器半透明）。</summary>
     private static bool _translucentSurfaces;
