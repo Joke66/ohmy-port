@@ -68,6 +68,9 @@
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
             </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+            </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -149,6 +152,14 @@
     <Setter Property="Padding" Value="6,3" />
     <Setter Property="MinHeight" Value="26" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Style.Triggers>
+      <Trigger Property="IsKeyboardFocused" Value="True">
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+      </Trigger>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.AccentHover}" />
+      </Trigger>
+    </Style.Triggers>
   </Style>
 
   <!-- ============ 复选表 ============ -->

@@ -50,6 +50,9 @@ public sealed class LogView : TextEditor
 
         // Ctrl+滚轮缩放字体（与 Python 版一致）
         PreviewMouseWheel += OnPreviewMouseWheel;
+
+        // 立即应用主题底/前景/光标色，避免 new 出来到 ApplyThemeColors 之间闪白
+        Loaded += (_, _) => ApplyTheme();
     }
 
     /// <summary>默认字号（与 Python 版 _DEFAULT_FONT_SIZE=11 对应，WPF 用 12 更接近视觉）。</summary>

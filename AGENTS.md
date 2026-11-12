@@ -7,7 +7,7 @@
 
 OhmyPort 是一个 Windows 串口调试助手，C# / WPF 实现（.NET 10）。它是 Python + PySide6 原版（master 分支）的 C# 重写分支（wpf 分支），功能目标与原版一致：用原生 Windows 运行时替代 PyInstaller 自解压，换取更小体积与更快启动。
 
-核心能力：多串口会话、文本/HEX 收发（HEX 分列 + ASCII 对照）、关键词过滤四模式（含正则）、协议帧解析 + 字段解析、发送自动算校验、实时曲线、命令页 + 定时循环发送（每条独立延时）+ 文件下发、日志录制/分片/保留、四套主题/背景皮肤/托盘、会话重命名/复制、窗口记忆、自定义强调色。
+核心能力：多串口会话、文本/HEX 收发（HEX 分列 + ASCII 对照）、关键词过滤四模式（含正则）、协议帧解析 + 字段解析、发送自动算校验、实时曲线、命令页 + 定时循环发送（每条独立延时）+ 文件下发、日志录制/分片/保留、四套主题/背景皮肤/托盘、会话重命名/复制、窗口记忆、自定义强调色；界面含状态栏连接色点、空态提示、面板淡入、控件焦点/悬停反馈。
 
 模块边界：
 
@@ -45,7 +45,7 @@ reference/                         被引用的私有文档（gitignore 不上�
 
 ```
 OhmyPort.sln                        解决方案（src + tests 两个解决方案文件夹）
-Directory.Build.props               全局属性：LangVersion latest / Nullable / Version=1.8.8 / zh-Hans
+Directory.Build.props               全局属性：LangVersion latest / Nullable / Version=2.0.0 / zh-Hans
 build.ps1                           一键发布脚本（dotnet publish + Inno Setup）
 installer.iss                       Inno Setup 安装脚本
 src/OhmyPort.Core/                  纯逻辑层（无 UI）

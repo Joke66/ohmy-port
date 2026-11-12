@@ -3,7 +3,6 @@
 > 覆盖 `src/OhmyPort.App/` 全部视图与控件。依赖 `OhmyPort.Core`，不反向。
 
 ## 1. 启动入口与全局异常 — `App.xaml` / `App.xaml.cs`
-
 - `App.xaml`：`StartupUri=MainWindow.xaml`，MergedDictionaries 固定为 `Dark.xaml` + `Base.xaml` + `Icons.xaml`（约定 [0] 为可切换主题字典）。
 - `App.OnStartup`：
   - `--stress` 参数触发 `StressTest.Run()` 后直接退出（不加载主界面）。
@@ -58,6 +57,7 @@
 - 状态：`StatusText` 拼端口/波特率/编码/连接状态/RX/TX 字节与实时速率（`SampleRate` 每秒采样增量），`StatusChanged` 通知主窗口刷新状态栏。
 - 热插拔：`_hotplugTimer`（2s）检测连接端口被拔出则自动断开，端口集合变化则刷新列表。
 - 生命周期：`Shutdown` 停定时器、关日志、断开串口。
+- 视觉打磨：状态栏连接色点（`RefreshStatusBar` 设 `ConnDot.Fill`）；主日志空态提示（`LogEmptyHint` 由 `UpdateEmptyHint` 按 `_buffer` 切换）；面板显示走 `SetPanelVisible`（120ms 淡入、隐藏即时收起）。
 
 ## 4. 日志控件 — `Controls/LogView.cs`
 
@@ -67,7 +67,7 @@
 - 内置 `SearchPanel`（Ctrl+F / F3 / Shift+F3 / Esc）。
 - `AppendLines(lines, follow)`：批量插入（`Document.BeginUpdate`）+ `TrimToMaxLines`（超出 `MaxLines` 从头部删）+ 按需 `ScrollToEnd`。
 - `ZoomIn/Out/Reset`：字号缩放（6~72，默认 12），Ctrl+滚轮也缩放。
-- `ApplyTheme`：AvalonEdit 不参与全局样式，背景透明、前景/选区/光标显式绑定资源，避免深色主题白底白字。
+- `ApplyTheme`：AvalonEdit 不参与全局样式，背景透明、前景/选区/光标显式绑定资源，避免深色主题白底白字；构造时 `Loaded` 事件即调一次 `ApplyTheme`，避免新建瞬间白底。
 - `SetKeywords` / `RefreshHighlight`：关键词高亮重算。
 - `LogColorizer`（`DocumentColorizingTransformer`）：无状态按行着色——时间戳 `[HH:mm:ss.fff] `、`SEND >>>>>>>>>>` 标记（Tx）、`◆ ` 系统标记、`RECV <<<<<<<<<<` 应答标记、关键词高亮（背景+前景）。
 - 方向标记常量：`TxMark = "SEND >>>>>>>>>>"`、`SysMark = "◆ "`、`ResponseMark = "RECV <<<<<<<<<<"`。

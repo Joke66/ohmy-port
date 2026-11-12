@@ -1351,11 +1351,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (ActiveSession is not { } session)
         {
+            ConnDot.Fill = ThemeService.GetBrush("Brush.Border");
             StatusLabel.Text = "就绪";
             SessionCountLabel.Text = "";
             return;
         }
 
+        ConnDot.Fill = ThemeService.GetBrush(
+            session.IsConnected ? "Brush.Connected" : "Brush.Border");
         StatusLabel.Text = session.StatusText;
         SessionCountLabel.Text = $"{session.Title} · {_sessions.Count} 个会话";
     }

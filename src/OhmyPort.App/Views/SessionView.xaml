@@ -88,17 +88,23 @@
     <!-- 日志区 -->
     <Border Grid.Row="4" Background="{DynamicResource Brush.LogSurface}"
             BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
-      <controls:LogView x:Name="LogText" MaxLines="50000">
-        <controls:LogView.ContextMenu>
-          <ContextMenu>
-            <MenuItem x:Name="CopyMenuItem" Header="复制选中" InputGestureText="Ctrl+C" />
-            <MenuItem x:Name="CopyAllMenuItem" Header="复制全部" />
-            <MenuItem x:Name="SaveLogMenuItem" Header="保存日志" InputGestureText="Ctrl+S" />
-            <Separator />
-            <MenuItem x:Name="ClearMenuItem" Header="清空显示" />
-          </ContextMenu>
-        </controls:LogView.ContextMenu>
-      </controls:LogView>
+      <Grid>
+        <controls:LogView x:Name="LogText" MaxLines="50000">
+          <controls:LogView.ContextMenu>
+            <ContextMenu>
+              <MenuItem x:Name="CopyMenuItem" Header="复制选中" InputGestureText="Ctrl+C" />
+              <MenuItem x:Name="CopyAllMenuItem" Header="复制全部" />
+              <MenuItem x:Name="SaveLogMenuItem" Header="保存日志" InputGestureText="Ctrl+S" />
+              <Separator />
+              <MenuItem x:Name="ClearMenuItem" Header="清空显示" />
+            </ContextMenu>
+          </controls:LogView.ContextMenu>
+        </controls:LogView>
+        <TextBlock x:Name="LogEmptyHint" Text="等待数据…"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   Foreground="{DynamicResource Brush.Muted}" Opacity="0.55"
+                   IsHitTestVisible="False" />
+      </Grid>
     </Border>
 
     <!-- 帧字段解析结果（默认隐藏，视图菜单「字段解析」打开） -->

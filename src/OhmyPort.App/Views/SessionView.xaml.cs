@@ -6,6 +6,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using OhmyPort.App.Controls;
@@ -199,14 +200,14 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     public bool ParamsVisible
     {
         get => ParamsPanel.Visibility == Visibility.Visible;
-        set => ParamsPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        set => SetPanelVisible(ParamsPanel, value);
     }
 
     /// <summary>发送面板是否可见（视图菜单控制）。</summary>
     public bool SendVisible
     {
         get => SendPanel.Visibility == Visibility.Visible;
-        set => SendPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        set => SetPanelVisible(SendPanel, value);
     }
 
     /// <summary>HEX 显示开关（视图菜单控制）。</summary>
@@ -227,14 +228,14 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     public bool FilterVisible
     {
         get => FilterPanel.Visibility == Visibility.Visible;
-        set => FilterPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        set => SetPanelVisible(FilterPanel, value);
     }
 
     /// <summary>协议帧解析面板是否可见（视图菜单控制）。</summary>
     public bool ProtocolVisible
     {
         get => ProtocolPanel.Visibility == Visibility.Visible;
-        set => ProtocolPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        set => SetPanelVisible(ProtocolPanel, value);
     }
 
     /// <summary>帧字段解析结果面板是否可见（视图菜单控制）。</summary>
@@ -243,7 +244,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         get => FieldsPanel.Visibility == Visibility.Visible;
         set
         {
-            FieldsPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            SetPanelVisible(FieldsPanel, value);
             if (value)
             {
                 RefreshFields();
@@ -889,6 +890,8 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             MaybeRefreshFields();
         }
 
+        UpdateEmptyHint();
+
         // 分片 / 错误处理（与 Python 版一致，drain 之后统一处理）
         if (_logmgr.IsOpen)
         {
@@ -1068,8 +1071,13 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         _latestFrame = null;
         _plotHub.Clear();
         RefreshFields();
+        UpdateEmptyHint();
         RaiseStatusChanged();
     }
+
+    /// <summary>主日志区空态提示（有缓存行时隐藏，清空后显示）。</summary>
+    private void UpdateEmptyHint() =>
+        LogEmptyHint.Visibility = _buffer.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     // ---------- 记录 ----------
 
@@ -1185,6 +1193,28 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         var collapsed = ProtocolDetailPanel.Visibility == Visibility.Visible;
         ProtocolDetailPanel.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
         ProtocolFoldButton.Content = collapsed ? "详情 ▾" : "收起 ▴";
+    }
+
+    /// <summary>面板显示 / 隐藏：显示时 120ms 淡入，隐藏即时收起（低频交互，不碰日志渲染路径）。</summary>
+    private static void SetPanelVisible(FrameworkElement panel, bool visible)
+    {
+        if (visible)
+        {
+            panel.BeginAnimation(OpacityProperty, null);
+            panel.Opacity = 0;
+            panel.Visibility = Visibility.Visible;
+            panel.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120))
+                {
+                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                });
+        }
+        else
+        {
+            panel.BeginAnimation(OpacityProperty, null);
+            panel.Opacity = 1;
+            panel.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void ApplyProtocol()

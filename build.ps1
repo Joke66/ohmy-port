@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
 $AppName = "OhmyPort"
-$Version = "1.8.8"          # 与 OhmyPort.Core/Constants.cs 中 AppInfo.Version 保持一致
+$Version = "2.0.0"          # 与 OhmyPort.Core/Constants.cs 中 AppInfo.Version 保持一致
 $DotNet  = "dotnet"
 
 # [1/4] 检查 .NET SDK
