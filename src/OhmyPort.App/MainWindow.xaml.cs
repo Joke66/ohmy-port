@@ -3,12 +3,15 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using OhmyPort.App.Views;
 using OhmyPort.Core;
+using OhmyPort.Core.Models;
 
 namespace OhmyPort.App;
 
 public partial class MainWindow : Window
 {
     private readonly List<SessionView> _sessions = [];
+    private readonly ConfigService _configService = new();
+    private AppConfig _config = new();
 
     public MainWindow()
     {
@@ -20,7 +23,31 @@ public partial class MainWindow : Window
             SyncMenuState();
             RefreshStatusBar();
         };
-        AddSession();
+
+        _config = _configService.Load();
+        var count = Math.Max(1, _config.Sessions.Count);
+        for (var i = 0; i < count; i++)
+        {
+            AddSession();
+        }
+
+        for (var i = 0; i < _sessions.Count && i < _config.Sessions.Count; i++)
+        {
+            ApplyRememberedState(_sessions[i], _config.Sessions[i]);
+        }
+    }
+
+    private static void ApplyRememberedState(SessionView session, SessionConfig remembered)
+    {
+        if (!string.IsNullOrEmpty(remembered.Port))
+        {
+            session.RememberedPort = remembered.Port;
+        }
+
+        if (!string.IsNullOrEmpty(remembered.Baud))
+        {
+            session.BaudText = remembered.Baud;
+        }
     }
 
     private SessionView? ActiveSession =>
@@ -181,11 +208,27 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        SaveConfig();
         foreach (var session in _sessions)
         {
             session.Shutdown();
         }
 
         base.OnClosed(e);
+    }
+
+    private void SaveConfig()
+    {
+        _config.Sessions = _sessions
+            .Select(s => new SessionConfig
+            {
+                Port = s.SelectedPort,
+                Baud = s.BaudText,
+                FontSize = 11,
+                CustomBauds = [],
+            })
+            .ToList();
+
+        _configService.Save(_config);
     }
 }

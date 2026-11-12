@@ -37,13 +37,16 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private readonly ConcurrentQueue<LogRecord> _pending = new();
     private readonly Queue<LogRecord> _buffer = new();
     private readonly DispatcherTimer _flushTimer;
+    private readonly DispatcherTimer _hotplugTimer;
     private readonly List<string> _pausedLines = [];
 
+    private HashSet<string> _knownPorts = new(StringComparer.OrdinalIgnoreCase);
     private Encoding _encoding = SendCodec.GetEncoding("utf-8");
     private bool _paused;
     private bool _hexView;
     private long _txBytes;
     private string _connectedPort = "";
+    private string? _rememberedPort;
 
     public SessionView()
     {
@@ -58,6 +61,14 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         _flushTimer.Tick += (_, _) => Flush();
         _flushTimer.Start();
 
+        _hotplugTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(UiDefaults.HotplugMs),
+        };
+        _hotplugTimer.Tick += (_, _) => CheckHotplug();
+        _hotplugTimer.Start();
+        _knownPorts = new HashSet<string>(SerialPort.GetPortNames(), StringComparer.OrdinalIgnoreCase);
+
         _monitor.Received += OnReceived;
         Loaded += async (_, _) => await RefreshPortsAsync();
     }
@@ -71,9 +82,26 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     /// <summary>会话序号（用于默认标题「串口N」）。</summary>
     public int Index { get; set; }
 
-    public string Title => _monitor.IsConnected ? $"● {_connectedPort}" : $"串口{Index + 1}";
+    public string Title => _monitor.IsConnected ? _connectedPort : $"串口{Index + 1}";
 
     public bool IsConnected => _monitor.IsConnected;
+
+    /// <summary>启动时恢复的端口名（在端口列表异步加载完成后选中）。</summary>
+    public string? RememberedPort
+    {
+        get => _rememberedPort;
+        set => _rememberedPort = value;
+    }
+
+    /// <summary>当前选中的端口名（配置持久化用）。</summary>
+    public string? SelectedPort => (PortCombo.SelectedItem as PortInfo?)?.PortName;
+
+    /// <summary>波特率输入框文本（配置持久化用）。</summary>
+    public string BaudText
+    {
+        get => BaudCombo.Text;
+        set => BaudCombo.Text = value;
+    }
 
     public string StatusText
     {
@@ -226,13 +254,40 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
     public async Task RefreshPortsAsync()
     {
-        var previous = (PortCombo.SelectedItem as PortInfo?)?.PortName;
+        var preferred = (PortCombo.SelectedItem as PortInfo?)?.PortName ?? _rememberedPort;
         var ports = await PortEnumerator.ListPortsAsync();
 
         PortCombo.ItemsSource = ports;
-        PortCombo.SelectedValue = ports.Any(p => string.Equals(p.PortName, previous, StringComparison.OrdinalIgnoreCase))
-            ? previous
+        PortCombo.SelectedValue = ports.Any(p => string.Equals(p.PortName, preferred, StringComparison.OrdinalIgnoreCase))
+            ? preferred
             : ports.Count > 0 ? ports[0].PortName : null;
+
+        _knownPorts = new HashSet<string>(ports.Select(p => p.PortName), StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>热插拔检测：连接中端口被拔出则自动断开；断开状态下端口集合变化则刷新列表。</summary>
+    private async void CheckHotplug()
+    {
+        var current = new HashSet<string>(SerialPort.GetPortNames(), StringComparer.OrdinalIgnoreCase);
+
+        if (_monitor.IsConnected)
+        {
+            var port = (PortCombo.SelectedItem as PortInfo?)?.PortName;
+            if (!string.IsNullOrEmpty(port) && !current.Contains(port))
+            {
+                _knownPorts = current;
+                DisconnectWithMessage(null);
+                AddSystem($"串口 {port} 已断开");
+            }
+
+            return;
+        }
+
+        if (!current.SetEquals(_knownPorts))
+        {
+            _knownPorts = current;
+            await RefreshPortsAsync();
+        }
     }
 
     // ---------- 连接 ----------
@@ -284,10 +339,16 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         UpdateConnectionUi();
     }
 
-    private void Disconnect()
+    private void Disconnect() => DisconnectWithMessage("串口已关闭");
+
+    private void DisconnectWithMessage(string? message)
     {
         _monitor.Disconnect();
-        AddSystem("串口已关闭");
+        if (message is not null)
+        {
+            AddSystem(message);
+        }
+
         UpdateConnectionUi();
     }
 
@@ -300,6 +361,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         BaudCombo.IsEnabled = !connected;
         RefreshButton.IsEnabled = !connected;
 
+        OnPropertyChanged(nameof(IsConnected));
         RaiseTitleChanged();
         RaiseStatusChanged();
     }
@@ -532,10 +594,13 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
 
     // ---------- 通知 ----------
 
+    private void OnPropertyChanged(string name) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
     private void RaiseTitleChanged()
     {
         TitleChanged?.Invoke(this, EventArgs.Empty);
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Title)));
+        OnPropertyChanged(nameof(Title));
     }
 
     private void RaiseStatusChanged() => StatusChanged?.Invoke(this, EventArgs.Empty);
@@ -543,6 +608,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     public void Shutdown()
     {
         _flushTimer.Stop();
+        _hotplugTimer.Stop();
         _monitor.Disconnect();
     }
 
