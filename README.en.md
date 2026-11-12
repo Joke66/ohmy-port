@@ -152,6 +152,6 @@ python benchmark.py
 
 ## Version
 
-- Version: 1.8.6
+- Version: 1.8.7
 - Author: ShineZhang
-- Date: 2026-09-08
+- Date: 2026-11-12

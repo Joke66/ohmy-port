@@ -62,9 +62,9 @@ _LOG_RETENTION_KEYS = [k for _, k, _ in _LOG_RETENTION_OPTIONS]
 _LOG_RETENTION_DAYS = {k: d for _, k, d in _LOG_RETENTION_OPTIONS}
 
 _APP_NAME = "OhmyPort"
-_APP_VERSION = "1.8.6"
+_APP_VERSION = "1.8.7"
 _APP_AUTHOR = "ShineZhang"
-_APP_DATE = "2026-09-08"
+_APP_DATE = "2026-11-12"
 _APP_URL = "https://gitee.com/Shine_Zhang/ohmy-port"
 _UPDATE_API = "https://gitee.com/api/v5/repos/Shine_Zhang/ohmy-port/releases/latest"
 _UPDATE_PAGE = "https://gitee.com/Shine_Zhang/ohmy-port/releases"

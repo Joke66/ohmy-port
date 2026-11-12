@@ -335,6 +335,18 @@ def _make_btn(text: str, slot) -> QPushButton:
     return btn
 
 
+def _disable_combo_autocomplete(combo: QComboBox) -> None:
+    """关闭可编辑 QComboBox 的自动补全（下拉历史仍可用）。
+
+    Qt 会给可编辑下拉框自动装一个大小写不敏感的 QCompleter（内联补全模式）：
+    输入 "P" 而历史里恰好有 "p" 时，回车会"接受补全"把输入替换成 "p"，
+    发送框/波特率框这类以输入内容为准的地方会因此发错数据，必须关掉。
+    """
+    edit = combo.lineEdit()
+    if edit is not None:
+        edit.setCompleter(None)
+
+
 def _load_pages_commands(data: dict, current_pages: list[str]) -> tuple[list[str], list[dict]]:
     """从配置 dict 解析发送辅助的命令页与命令（导出/导入/启动共用，纯逻辑）。"""
     pages = list(current_pages)
@@ -595,6 +607,7 @@ class SerialSession(QWidget):
         self.baud_combo = QComboBox()
         self.baud_combo.setEditable(True)
         self.baud_combo.addItems(_BAUDS)
+        _disable_combo_autocomplete(self.baud_combo)  # 防止自定义波特率被历史值补全改写
         self.baud_combo.setCurrentText("115200")
         self.baud_combo.setMinimumWidth(90)
         self.baud_combo.setToolTip("可直接输入自定义波特率（连接成功后加入下拉列表并记住，右键可删除）")
@@ -765,6 +778,7 @@ class SerialSession(QWidget):
         self.send_combo = QComboBox()
         self.send_combo.setEditable(True)
         self.send_combo.setInsertPolicy(QComboBox.NoInsert)
+        _disable_combo_autocomplete(self.send_combo)  # 保证发送内容与输入完全一致
         self.send_combo.lineEdit().setPlaceholderText("发送内容（HEX 模式输入如 01 03 00 0A）")
         self.send_combo.lineEdit().returnPressed.connect(self.send_raw)
         send.addWidget(self.send_combo, 1)
