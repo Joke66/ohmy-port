@@ -51,8 +51,8 @@
         <TextBlock Text="{Binding Author}" />
         <TextBlock Text="C# / WPF · .NET 10" Margin="0,8,0,0" />
         <TextBlock Margin="0,8,0,0">
-          <Hyperlink NavigateUri="{Binding Url}" RequestNavigate="OnOpenUrl">
-            <Run Text="{Binding Url}" />
+          <Hyperlink NavigateUri="{Binding Url, Mode=OneWay}" RequestNavigate="OnOpenUrl">
+            <Run Text="{Binding Url, Mode=OneWay}" />
           </Hyperlink>
         </TextBlock>
       </StackPanel>
