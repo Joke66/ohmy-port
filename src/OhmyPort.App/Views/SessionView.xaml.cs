@@ -64,6 +64,12 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
     private bool _fieldsDirty;
     private long _lastFieldsRefreshTicks;
 
+    /// <summary>曲线数据（实时曲线窗口从这里取数）。</summary>
+    private readonly PlotHub _plotHub = new();
+
+    /// <summary>曲线提取规则（配置持久化 + 窗口编辑回写用）。</summary>
+    private List<PlotRuleConfig> _plotRules = [];
+
     /// <summary>日志保存目录（由主窗口注入并同步）。</summary>
     public string LogDirectory { get; set; } = AppPaths.DefaultLogDir;
 
@@ -273,6 +279,24 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             Bias = f.Bias,
         })
         .ToList();
+
+    /// <summary>本会话的曲线数据（实时曲线窗口用）。</summary>
+    public PlotHub Plot => _plotHub;
+
+    /// <summary>当前曲线提取规则（配置持久化用）。</summary>
+    public List<PlotRuleConfig> PlotRulesSnapshot =>
+        _plotRules.Select(r => new PlotRuleConfig(r.Name, r.Pattern)).ToList();
+
+    /// <summary>设置曲线提取规则（配置恢复 / 窗口编辑回写）。容量沿用当前值。</summary>
+    public void SetPlotRules(IEnumerable<PlotRuleConfig>? rules)
+    {
+        _plotRules = (rules ?? [])
+            .Where(r => r is not null && r.Name.Length > 0 && r.Pattern.Length > 0)
+            .Select(r => new PlotRuleConfig(r.Name, r.Pattern))
+            .ToList();
+
+        _plotHub.Configure(_plotRules, _plotHub.Capacity);
+    }
 
     /// <summary>从配置恢复协议帧解析与发送校验状态。</summary>
     public void ApplyRememberedProtocol(string sendChecksum, bool frameEnabled, string frameHeader,
@@ -706,6 +730,13 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
             }
 
             var text = PayloadText(record);
+
+            // 曲线采集：只取接收行，暂停显示时仍继续采集
+            if (record.Direction == LogDirection.Rx && _plotHub.Enabled)
+            {
+                _plotHub.Feed(text);
+            }
+
             var visible = _filter.Visible(text);
             var isMatch = _filter.Mode == FilterModes.Split && _filter.Matched(text).Count > 0;
 
@@ -891,6 +922,7 @@ public partial class SessionView : UserControl, INotifyPropertyChanged
         LogText.ClearAll();
         MatchedText.ClearAll();
         _latestFrame = null;
+        _plotHub.Clear();
         RefreshFields();
         RaiseStatusChanged();
     }

@@ -84,7 +84,6 @@
 
 - 构造时解析正则，含捕获组才启用正则匹配；否则按关键词取其后第一个数字。
 - `Match(text)`：正则捕获组命中且可解析为数值返回该值，否则退回 `TextUtil.ExtractNumbers` 取第一个；关键词模式取关键词之后的第一个数字。
-- 对应 Python 版 plot_widget.PlotRule，目前仅 Core 层实现，UI 未接线（M7 待做）。
 
 ## 11.1 协议字段解析 — `Models/ProtocolField.cs`
 
@@ -97,6 +96,13 @@
   - 越界或类型非法返回 `Ok = false`、值显示「—」，不影响其它字段。
 - 与 `FrameParser` 的分工：`FrameParser` 负责切帧 / 验校验，`ProtocolDecoder` 负责帧内字段取值；两者都无 UI 依赖。
 
+## 11.2 实时曲线数据 — `Models/PlotSeries.cs`
+
+- `PlotRuleConfig`：持久化的曲线定义（名称 + 提取规则文本）。
+- `PlotSeries`：定长环形缓冲（逻辑索引 0 为最旧），`Add`/`Clear`/`Range()`（忽略 NaN）/`Latest`；缺失值用 `NaN` 表示，绘制时断线。
+- `PlotHub`：按规则从日志行取样（每条规则每行取一个值），`Configure` 重配规则（同名且容量不变时沿用缓冲）、`Feed`、`Clear`、`SetCapacity`（保留最近的点）。`Capacity` 默认 `UiDefaults.PlotWindow`。
+- 线程约束：与 `FrameParser` 一致，`Feed` 与绘制都在 UI 线程，无锁。
+
 ## 12. 日志落盘 — `Logging/LogManager.cs`
 
 - `Open(stem, logDir)`：以端口名 sanitize 后的 stem 生成 `<stem>_yyyyMMdd_HHmmss.txt`，`FileShare.Read` 允许外部查看。
@@ -107,4 +113,4 @@
 
 ## 13. 待接线（后续里程碑）
 
-- `PlotRule`：Core 已完整，App 未实现绘图窗口（M7）。`FrameParser` 已于第一批接线（协议帧解析面板）。
+- 暂无。`FrameParser`、`ProtocolDecoder`、`PlotHub` 均已接线。

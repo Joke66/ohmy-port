@@ -29,6 +29,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _cycleIndex;
     private bool _forceQuit;
     private CycleDialog? _cycleDialog;
+    private PlotWindow? _plotWindow;
 
     public MainWindow()
     {
@@ -179,6 +180,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             remembered.FrameBigEndian,
             remembered.FrameChecksum,
             remembered.ProtocolFields);
+
+        session.SetPlotRules(remembered.PlotRules);
     }
 
     private SessionView? ActiveSession =>
@@ -224,6 +227,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         session.Shutdown();
         _sessions.Remove(session);
+
+        // 曲线窗口跟的是这个会话，会话关掉就一并关掉，避免停在空白图上
+        if (_plotWindow is not null && ReferenceEquals(_plotWindow.OwnerSession, session))
+        {
+            _plotWindow.Close();
+            _plotWindow = null;
+        }
 
         var tab = SessionTabs.Items.OfType<TabItem>()
             .FirstOrDefault(t => ReferenceEquals(t.Content, session));
@@ -454,6 +464,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var dialog = new ChecksumCalculatorDialog { Owner = this };
         dialog.ShowDialog();
+    }
+
+    /// <summary>打开实时曲线窗口（同一时刻只跟一个会话；已开着就直接激活）。</summary>
+    private void OnOpenPlotClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveSession is not { } session)
+        {
+            return;
+        }
+
+        if (_plotWindow is { IsVisible: true } && ReferenceEquals(_plotWindow.OwnerSession, session))
+        {
+            _plotWindow.Activate();
+            return;
+        }
+
+        _plotWindow?.Close();
+        _plotWindow = new PlotWindow(
+            session.Plot,
+            session.Title,
+            session.Plot.Capacity,
+            () => session.PlotRulesSnapshot,
+            session.SetPlotRules)
+        {
+            Owner = this,
+            OwnerSession = session,
+        };
+        _plotWindow.Show();
     }
 
     // ---------- 日志记录设置（M8） ----------
@@ -1200,6 +1238,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _cycleTimer.Stop();
         _autoThemeTimer.Stop();
+        _plotWindow?.Close();
         _notifyIcon?.Dispose();
         SaveConfig();
         foreach (var session in _sessions)
@@ -1233,6 +1272,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 FrameBigEndian = s.FrameBigEndianValue,
                 FrameChecksum = s.FrameChecksumKey,
                 ProtocolFields = s.ProtocolFieldsSnapshot,
+                PlotRules = s.PlotRulesSnapshot,
             })
             .ToList();
 

@@ -1,0 +1,26 @@
+<Window x:Class="OhmyPort.App.Views.PlotWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:OhmyPort.App.Controls"
+        Title="实时曲线" Width="820" Height="500" MinWidth="480" MinHeight="300"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource Theme.Window}"
+        ShowInTaskbar="False">
+  <DockPanel Margin="8">
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+      <Button x:Name="RulesButton" Content="提取规则..." ToolTip="配置每条曲线从日志中提取数值的规则" />
+      <Button x:Name="ClearButton" Margin="6,0,0,0" Content="清空" ToolTip="清空已采集的数据" />
+      <CheckBox x:Name="PauseCheck" Margin="12,0,0,0" VerticalAlignment="Center"
+                Content="暂停刷新" ToolTip="暂停重绘（后台仍持续采集）" />
+      <TextBlock Margin="14,0,6,0" VerticalAlignment="Center" Text="窗口点数" />
+      <ComboBox x:Name="PointsCombo" Width="90" ToolTip="每条曲线保留的采样点数" />
+      <TextBlock x:Name="HintText" Margin="14,0,0,0" VerticalAlignment="Center"
+                 Foreground="{DynamicResource Brush.Muted}" />
+    </StackPanel>
+
+    <Border Background="{DynamicResource Brush.LogBackground}"
+            BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+      <controls:PlotCanvas x:Name="Canvas" />
+    </Border>
+  </DockPanel>
+</Window>

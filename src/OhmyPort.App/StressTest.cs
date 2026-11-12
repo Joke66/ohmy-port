@@ -84,4 +84,62 @@ public static class StressTest
         window.Close();
         Application.Current.Shutdown();
     }
+
+    /// <summary>
+    /// 曲线渲染冒烟（命令行 --plot-smoke 触发）：灌两路合成数据，把画布渲染成 PNG。
+    /// 用于无硬件时验证 PlotCanvas 的绘制 / 缩放 / 断线逻辑。
+    /// </summary>
+    public static void RunPlotSmoke()
+    {
+        var hub = new OhmyPort.Core.Models.PlotHub();
+        hub.Configure(
+        [
+            new OhmyPort.Core.Models.PlotRuleConfig("正弦", "sin="),
+            new OhmyPort.Core.Models.PlotRuleConfig("方波", "step="),
+        ], 600);
+
+        for (var i = 0; i < 600; i++)
+        {
+            var sin = Math.Sin(i / 40.0) * 25 + 50;
+            // 每 150 点故意缺一次采样，验证断线
+            var step = i % 150 == 0 ? "step=none" : $"step={(i % 100 < 50 ? 10 : 80)}";
+            hub.Feed($"sin={sin:F2} {step}");
+        }
+
+        const int width = 820;
+        const int height = 460;
+        var canvas = new Controls.PlotCanvas { Hub = hub };
+        var window = new Window
+        {
+            Width = width,
+            Height = height,
+            WindowStyle = WindowStyle.None,
+            ShowInTaskbar = false,
+            Content = canvas,
+        };
+        ThemeService.AttachWindow(window);
+        window.Show();
+        window.UpdateLayout();
+        canvas.InvalidateVisual();
+        window.UpdateLayout();
+
+        // 按画布实际尺寸渲染（窗口非客户区会让 ActualWidth/Height 小于窗口尺寸）
+        var pixelWidth = (int)Math.Round(canvas.ActualWidth);
+        var pixelHeight = (int)Math.Round(canvas.ActualHeight);
+
+        var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+            pixelWidth, pixelHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        bitmap.Render(canvas);
+
+        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+        var path = System.IO.Path.Combine(AppContext.BaseDirectory, "plot_smoke.png");
+        using (var stream = File.Create(path))
+        {
+            encoder.Save(stream);
+        }
+
+        window.Close();
+        Application.Current.Shutdown();
+    }
 }

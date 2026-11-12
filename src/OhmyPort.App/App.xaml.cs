@@ -16,6 +16,13 @@ public partial class App : Application
             return;
         }
 
+        // 曲线渲染冒烟：把 PlotCanvas 渲染成 PNG
+        if (e.Args.Contains("--plot-smoke", StringComparer.OrdinalIgnoreCase))
+        {
+            StressTest.RunPlotSmoke();
+            return;
+        }
+
         // GBK 等代码页编码需要显式注册（.NET Core 起默认不含）
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 

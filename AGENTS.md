@@ -7,7 +7,7 @@
 
 OhmyPort 是一个 Windows 串口调试助手，C# / WPF 实现（.NET 10）。它是 Python + PySide6 原版（master 分支）的 C# 重写分支（wpf 分支），功能目标与原版一致：用原生 Windows 运行时替代 PyInstaller 自解压，换取更小体积与更快启动。
 
-核心能力：多串口会话、文本/HEX 收发、关键词过滤四模式、协议帧解析 + 字段解析、发送自动算校验、命令页 + 定时循环发送、日志录制/分片/保留、四套主题/背景皮肤/托盘。
+核心能力：多串口会话、文本/HEX 收发、关键词过滤四模式、协议帧解析 + 字段解析、发送自动算校验、实时曲线、命令页 + 定时循环发送、日志录制/分片/保留、四套主题/背景皮肤/托盘。
 
 模块边界：
 
@@ -60,6 +60,7 @@ src/OhmyPort.Core/                  纯逻辑层（无 UI）
 ├── Models/CommandItem.cs           命令项 + 命令页解析（CommandPages）
 ├── Models/PlotRule.cs              数值提取规则（正则捕获组 / 关键词取数字）
 ├── Models/ProtocolField.cs         协议字段类型表 + 字段定义 + 帧内字段解码器（ProtocolDecoder）
+├── Models/PlotSeries.cs            实时曲线数据：环形缓冲 + 取样中心（PlotHub）
 └── Serial/
     ├── FrameParser.cs              自定义帧协议解析（帧头/长度/校验 SUM8/XOR8/CRC16-Modbus）
     ├── PortEnumerator.cs           串口枚举 + WMI 友好名
@@ -71,6 +72,7 @@ src/OhmyPort.App/                   WPF 界面层
 ├── ThemeService.cs                 四套主题 + 系统深浅跟随 + 背景半透明画刷 + 标题栏深色
 ├── StressTest.cs                   日志控件性能压测（--stress）
 ├── Controls/LogView.cs             基于 AvalonEdit 的日志控件（批量追加/裁剪/着色/关键词高亮/查找）
+├── Controls/PlotCanvas.cs          实时曲线画布（自绘折线/网格/图例，Y 轴自动缩放）
 ├── Assets/Icons.xaml               图标几何资源
 ├── Themes/Base.xaml                控件通用样式
 ├── Themes/Dark.xaml / Light.xaml / Eye.xaml   三套配色字典（auto 解析到 dark/light）
@@ -81,6 +83,8 @@ src/OhmyPort.App/                   WPF 界面层
     ├── CycleDialog.xaml / .xaml.cs 定时循环发送设置
     ├── ChecksumCalculatorDialog.cs 校验计算器（SUM8/XOR8/CRC16-Modbus）
     ├── ProtocolFieldDialog.xaml / .xaml.cs 协议字段编辑（名称/偏移/类型/系数）
+    ├── PlotWindow.xaml / .xaml.cs   实时曲线窗口（60ms 重绘）
+    ├── PlotRuleDialog.xaml / .xaml.cs 曲线提取规则编辑
     ├── BackgroundDialog.cs         背景皮肤对话框
     ├── CloseConfirmDialog.cs       关闭确认（托盘/退出/不再提示）
     ├── ComboSelectDialog.cs        下拉选择对话框（保留策略/字体）
@@ -88,7 +92,7 @@ src/OhmyPort.App/                   WPF 界面层
 tests/OhmyPort.Core.Tests/          xUnit（移植自原版 pytest）
 ├── CommandPagesTests.cs / FrameParserTests.cs / LogFilterTests.cs
 ├── PlotRuleTests.cs / SendCodecTests.cs / TextUtilTests.cs
-├── AppConfigTests.cs / ProtocolDecoderTests.cs
+├── AppConfigTests.cs / ProtocolDecoderTests.cs / PlotHubTests.cs
 ```
 
 ## 5. 架构概要
@@ -139,4 +143,5 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 - 崩溃日志：`error.log`（exe 同级），关键词 `未处理的错误`、异常堆栈，用于快速定位未捕获异常。
 - 串口错误：`SerialMonitor.LastError`，连接失败时弹窗提示，关键词 `打开失败` / `端口不存在` / `被其它软件占用`。
 - 性能压测：`OhmyPort.exe --stress`，结果写入 `stress_result.txt`（关键词 `append_50000_lines_ms`、`batch_200_avg_ms`）。
+- 曲线渲染冒烟：`OhmyPort.exe --plot-smoke`，把 `PlotCanvas` 用合成数据渲染为 `plot_smoke.png`（无硬件时验证绘制/缩放/断线，可直接看图核对）。
 - 常见异常原因：GBK 未注册（`SendCodec` 静态构造已处理）、WMI 不可用（`PortEnumerator` 退回裸端口名）、DTR/DSR 流控不支持（按无流控打开）。

@@ -46,6 +46,7 @@
 - 发送：`SendRaw` 读输入 → `SendContent`（HEX/文本 + 换行）→ 选中校验时追加校验字节（换行前）→ 成功后入队 Tx 回显并计 `_txBytes`、写发送历史（上限 50）。
 - 协议帧解析：`ApplyProtocol` 由帧头/帧尾/长度/校验字段构造 `FrameParser` 并 `SetFrameParser`；未启用时置 null 回退按行。帧校验失败在 `Flush` 中追加系统提示。
 - 字段解析：`Flush` 记录最近一帧（`_latestFrame`）并置脏；`MaybeRefreshFields` 限速 150ms、面板不可见时不解码，`RefreshFields` 调 `ProtocolDecoder.Decode` 刷新表格（越界字段标红）。数据区偏移 `_frameDataOffset = 帧头长度 + 长度字段长度`。字段定义由 `ProtocolFieldDialog` 编辑，按会话持久化。
+- 曲线采集：`Flush` 中对接收行调 `_plotHub.Feed(text)`（暂停显示时仍采集）；`ClearLog` 一并清空曲线数据。规则由 `SetPlotRules` 写入（配置恢复 / 曲线窗口编辑）。
 - 记录：`StartRecord`/`StopRecord` 用 `LogManager` 落盘；`ToggleRecord` 切换；`SyncRecordButton` 更新按钮文案。
 - 状态：`StatusText` 拼端口/波特率/编码/连接状态/RX/TX 字节，`StatusChanged` 通知主窗口刷新状态栏。
 - 热插拔：`_hotplugTimer`（2s）检测连接端口被拔出则自动断开，端口集合变化则刷新列表。
@@ -64,8 +65,14 @@
 - `LogColorizer`（`DocumentColorizingTransformer`）：无状态按行着色——时间戳 `[HH:mm:ss.fff] `、`SEND >>>>>>>>>>` 标记（Tx）、`◆ ` 系统标记、关键词高亮（背景+前景）。
 - 方向标记常量：`TxMark = "SEND >>>>>>>>>>"`、`SysMark = "◆ "`。
 
-## 5. 主题系统 — `ThemeService.cs`
+## 4.1 实时曲线画布 — `Controls/PlotCanvas.cs`
 
+- `FrameworkElement` 直接 `OnRender` 绘制：背景取 `Brush.LogBackground`、网格取 `Brush.Border`、刻度文字取 `Brush.Muted`（主题切换后下一次重绘生效）。
+- 布局：左侧 60px 刻度区、底部 24px、顶部图例行；Y 轴 4 段自动缩放（全系列极值合并 + 5% 余量，退化时 ±1）。
+- 折线：8 色固定调色板按系列序号取色；`NaN` 断开 figure；X 按 `Capacity` 铺满（数据未满时从左向右生长，满了之后滚动）。
+- 图例：色块 + 名称 + 最新值，宽度不够时截断。
+
+## 5. 主题系统 — `ThemeService.cs`
 - 四套主题：auto/black/day/eye；auto 按注册表 `AppsUseLightTheme` 解析为 black/day。
 - `Apply(key)`：切换 MergedDictionaries[0] 为对应 `Themes/*.xaml`，刷新标题栏并触发 `ThemeChanged`。
 - `RefreshIfAuto`：auto 模式下轮询（2s）检测系统深浅变化。
@@ -88,6 +95,8 @@
 - `NumberInputDialog`：通用数字输入（日志分片大小，钳制范围）。
 - `ChecksumCalculatorDialog`：校验计算器，HEX 输入 → SUM8/XOR8/CRC16-Modbus 结果 + 复制。
 - `ProtocolFieldDialog`：协议字段编辑，一行一个字段（名称/偏移/类型/长度/大端/系数/偏移量），确定时统一校验；`FieldRow` 保存文本态输入。
+- `PlotRuleDialog`：曲线提取规则编辑，一行一条曲线（名称 + 正则/关键词）。
+- `PlotWindow`（独立窗口，非模态）：工具栏（提取规则/清空/暂停刷新/窗口点数）+ `PlotCanvas` 绘图；60ms 定时重绘，数据来自所属会话的 `PlotHub`（关窗不丢数据，重开接上）；会话关闭时一并关闭。
 
 ## 8. 性能压测 — `StressTest.cs`
 

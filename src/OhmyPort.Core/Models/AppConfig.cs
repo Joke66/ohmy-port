@@ -35,6 +35,9 @@ public sealed class SessionConfig
 
     /// <summary>协议字段定义（按帧解析时把数据区解成结构化表格）。</summary>
     public List<ProtocolField> ProtocolFields { get; set; } = [];
+
+    /// <summary>实时曲线的提取规则。</summary>
+    public List<PlotRuleConfig> PlotRules { get; set; } = [];
 }
 
 /// <summary>
@@ -174,6 +177,18 @@ public sealed class AppConfig
 
                     return f;
                 })
+                .ToList();
+
+            s.PlotRules ??= [];
+            s.PlotRules = s.PlotRules
+                .Where(r => r is not null)
+                .Select(r =>
+                {
+                    r.Name ??= "";
+                    r.Pattern ??= "";
+                    return r;
+                })
+                .Where(r => r.Name.Length > 0 && r.Pattern.Length > 0)
                 .ToList();
 
             s.CustomBauds ??= [];

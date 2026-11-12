@@ -45,6 +45,8 @@
                   app:IconGlyph.Name="protocol" Click="OnToggleProtocolClick" />
         <MenuItem x:Name="FieldsMenu" Header="字段解析" IsCheckable="True"
                   app:IconGlyph.Name="fields" Click="OnToggleFieldsClick" />
+        <MenuItem x:Name="PlotMenu" Header="实时曲线" app:IconGlyph.Name="chart"
+                  Click="OnOpenPlotClick" />
         <MenuItem x:Name="SendMenu" Header="消息发送" IsCheckable="True" IsChecked="True"
                   app:IconGlyph.Name="message" Click="OnToggleSendClick" />
         <MenuItem x:Name="SendAssistMenu" Header="发送辅助" IsCheckable="True"
@@ -122,6 +124,13 @@
                       ToolTip="字段解析" Click="OnToolbarToggleClick">
           <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.fields}" />
         </ToggleButton>
+
+        <Rectangle Width="1" Margin="6,4" Fill="{DynamicResource Brush.Border}" />
+
+        <Button x:Name="TbPlot" Style="{StaticResource ToolStrip.Button}" ToolTip="实时曲线"
+                Click="OnOpenPlotClick">
+          <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.chart}" />
+        </Button>
         <ToggleButton x:Name="TbSend" Tag="send" Style="{StaticResource ToolStrip.Toggle}"
                       ToolTip="消息发送" Click="OnToolbarToggleClick">
           <Path Style="{StaticResource Theme.Icon}" Data="{StaticResource Icon.message}" />
